@@ -1,0 +1,22 @@
+{
+  "name": "dsh-obsidian-plugin",
+  "version": "0.1.0",
+  "description": "Obsidian plugin: chat with a DeepSeek Harness session over the dsh-bridge-obsidian WebSocket; agent vault tools execute locally via the Obsidian Vault API",
+  "author": "kaitzh",
+  "license": "MIT",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "typecheck": "tsc -noEmit -skipLibCheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.24.0",
+    "obsidian": "latest",
+    "tslib": "2.4.0",
+    "typescript": "^5.4.0"
+  }
+}

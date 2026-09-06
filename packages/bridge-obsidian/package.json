@@ -1,0 +1,15 @@
+{
+  "name": "@yuxianglin/dsh-bridge-obsidian",
+  "description": "Bridge plugin: token-authenticated WebSocket carrier for the Obsidian plugin plus obsidian_* vault tools executed in the connected Obsidian client, and in-host chat session bridging",
+  "version": "0.1.0",
+  "author": "kaitzh",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  }
+}

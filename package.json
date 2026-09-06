@@ -1,0 +1,12 @@
+{
+  "name": "dsh-bridge-obsidian",
+  "version": "0.1.0",
+  "description": "Bridge DeepSeek Harness to Obsidian: token-authenticated WebSocket carrier plus obsidian_* vault tools executed in the connected Obsidian client, and in-host chat session bridging for the Obsidian chat panel",
+  "author": "kaitzh",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter @yuxianglin/dsh-bridge-obsidian run build && pnpm --filter dsh-obsidian-plugin run build",
+    "typecheck": "pnpm --filter @yuxianglin/dsh-bridge-obsidian run typecheck && pnpm --filter dsh-obsidian-plugin run typecheck"
+  }
+}
