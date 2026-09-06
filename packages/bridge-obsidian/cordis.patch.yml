@@ -1,0 +1,23 @@
+# Obsidian bridge layer for the dsh `web` profile.
+#
+# `dsh plugin --profile web add` registers this package's `dsh.bundle`
+# manifest, so the repository launcher and `dsh web` apply this patch without
+# an extra command-line option.
+#
+# On first boot the plugin generates a bearer token and persists it at
+# ~/.dsh/obsidian-bridge-token (chmod 0600). Paste it into the Obsidian
+# plugin's settings. To pin a fixed token, set DSH_OBSIDIAN_TOKEN and it is
+# used verbatim instead.
+#
+# Security: the bridge path carries its own token auth (no loopback
+# shortcut) and refuses privileged gateway methods for non-loopback remotes.
+# Do not run `dsh web --host 0.0.0.0` on untrusted networks with this layer.
+
+- insert:
+    - id: bridge-obsidian
+      name: '@yuxianglin/dsh-bridge-obsidian'
+      config:
+        token: !!js process.env.DSH_OBSIDIAN_TOKEN
+        toolTimeoutMs: 90000
+        maxReadChars: 40000
+        searchLimit: 20
