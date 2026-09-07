@@ -52,6 +52,16 @@ export interface BridgeCaps {
   searchLimit: number
 }
 
+/** One vault skill published by the connected Obsidian client. */
+export interface VaultSkillEntry {
+  /** Skill name from SKILL.md frontmatter (defaults to the folder name). */
+  name: string
+  /** Trigger description; the model reads the full file only when relevant. */
+  description: string
+  /** Vault-relative path of the SKILL.md file. */
+  path: string
+}
+
 /** Frames sent by the Obsidian client to the bridge plugin. */
 export type ClientFrame =
   | { t: 'hello'; token: string; vaultName: string }
@@ -59,6 +69,7 @@ export type ClientFrame =
   | { t: 'respond'; id: string; rpcId: string; result: RespondResult }
   | { t: 'tool.result'; id: string; ok: true; result: unknown }
   | { t: 'tool.result'; id: string; ok: false; error: ToolError }
+  | { t: 'skills.manifest'; skills: VaultSkillEntry[] }
   | { t: 'pong' }
 
 /** Frames sent by the bridge plugin to the Obsidian client. */

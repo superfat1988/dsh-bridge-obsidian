@@ -18,6 +18,10 @@ export interface DshBridgeSettings {
   writeApproval: 'ask' | 'auto'
   /** Connect automatically when Obsidian loads. */
   autoConnect: boolean
+  /** Conversation archiving: off, append at every turn end, or manual command only. */
+  conversationArchive: 'off' | 'turn' | 'manual'
+  /** Vault folder for conversation archives and vault skills. */
+  archiveFolder: string
 }
 
 export const DEFAULT_SETTINGS: DshBridgeSettings = {
@@ -25,6 +29,8 @@ export const DEFAULT_SETTINGS: DshBridgeSettings = {
   token: '',
   writeApproval: 'ask',
   autoConnect: true,
+  conversationArchive: 'turn',
+  archiveFolder: 'Deepseek Harness',
 }
 
 export class DshBridgeSettingTab extends PluginSettingTab {
@@ -83,6 +89,32 @@ export class DshBridgeSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.autoConnect)
         .onChange(async value => {
           this.plugin.settings.autoConnect = value
+          await this.plugin.saveSettings()
+        }))
+
+    new Setting(containerEl).setName('会话存档与 Skills').setHeading()
+
+    new Setting(containerEl)
+      .setName('会话存档')
+      .setDesc('关闭 / 每轮自动追加（推荐）/ 仅手动命令存档')
+      .addDropdown(dropdown => dropdown
+        .addOption('off', '关闭')
+        .addOption('turn', '每轮自动追加')
+        .addOption('manual', '仅手动')
+        .setValue(this.plugin.settings.conversationArchive)
+        .onChange(async value => {
+          this.plugin.settings.conversationArchive = value as 'off' | 'turn' | 'manual'
+          await this.plugin.saveSettings()
+        }))
+
+    new Setting(containerEl)
+      .setName('存档与 Skills 目录')
+      .setDesc('对话存档写入该目录；skills 从其 skills/ 子目录扫描（<目录>/skills/<名称>/SKILL.md），模型按需读取')
+      .addText(text => text
+        .setPlaceholder('Deepseek Harness')
+        .setValue(this.plugin.settings.archiveFolder)
+        .onChange(async value => {
+          this.plugin.settings.archiveFolder = value.trim().replace(/^\/+|\/+$/g, '') || 'Deepseek Harness'
           await this.plugin.saveSettings()
         }))
 

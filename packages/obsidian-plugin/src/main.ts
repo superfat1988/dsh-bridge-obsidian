@@ -10,9 +10,11 @@
 
 import { Modal, Notice, Plugin, TFile, addIcon } from "obsidian"
 import type { App } from "obsidian"
+import { appendTurn, exportConversation, type TurnRecord } from './archive.ts'
 import { DshChatView, VIEW_TYPE_DSH_CHAT } from './chat-view.ts'
 import { BridgeClient, discoverBridgeUrl, type ToolCallRequest } from './connection.ts'
 import { DSH_MARK_SVG } from './icon.ts'
+import { scanVaultSkills } from './skills-scan.ts'
 import { DEFAULT_SETTINGS, DshBridgeSettingTab, type DshBridgeSettings } from './settings.ts'
 import { executeToolCall } from './vault.ts'
 
@@ -48,8 +50,12 @@ export default class DshBridgePlugin extends Plugin {
     this.client.onEvent = frame => this.chatView?.handleEvent(frame)
     this.client.onStatus = () => {
       this.chatView?.updateStatus()
-      // The socket came back: durable history lives on the Host, re-fetch it.
-      if (this.client.isReady()) void this.chatView?.refreshHistory()
+      // The socket came back: durable history lives on the Host, re-fetch it
+      // and (re)publish the vault skills manifest for bridge-session injection.
+      if (this.client.isReady()) {
+        void this.chatView?.refreshHistory()
+        void this.publishSkills()
+      }
     }
 
     this.registerView(VIEW_TYPE_DSH_CHAT, leaf => {
@@ -66,6 +72,12 @@ export default class DshBridgePlugin extends Plugin {
     this.addCommand({ id: 'reconnect', name: '重新连接 DSH 桥', callback: () => { void this.reconnect() } })
     this.addCommand({ id: 'new-chat', name: '新建 DSH 对话', callback: () => {
       void this.activateView().then(() => this.chatView?.startNewChat())
+    } })
+    this.addCommand({ id: 'archive-chat', name: '存档当前对话', callback: () => {
+      void this.activateView().then(() => this.chatView?.exportCurrentConversation())
+    } })
+    this.addCommand({ id: 'rescan-skills', name: '重新扫描 vault Skills', callback: () => {
+      void this.publishSkills()
     } })
 
     if (this.settings.autoConnect && this.settings.token !== '') {
@@ -106,6 +118,34 @@ export default class DshBridgePlugin extends Plugin {
       workspace.revealLeaf(leaf)
       this.chatView?.updateStatus()
     }
+  }
+
+  /** Scan the vault skills tree and publish the manifest to the bridge. */
+  async publishSkills(): Promise<number> {
+    try {
+      const skills = await scanVaultSkills(this.app, this.settings.archiveFolder)
+      if (skills.length > 0) this.client.sendSkillsManifest(skills)
+      return skills.length
+    } catch (error) {
+      console.warn('[dsh-bridge] skills scan failed:', error)
+      return 0
+    }
+  }
+
+  /** Append one finished turn to the vault archive (auto mode). */
+  async archiveTurn(turn: TurnRecord): Promise<void> {
+    if (this.settings.conversationArchive === 'off') return
+    try {
+      await appendTurn(this.app, this.settings.archiveFolder, turn)
+    } catch (error) {
+      console.warn('[dsh-bridge] archive failed:', error)
+      new Notice(`会话存档失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Manual export: write the whole rendered conversation to one note. */
+  async archiveExport(title: string, sessionId: string, model: string | null, body: string): Promise<string> {
+    return await exportConversation(this.app, this.settings.archiveFolder, title, sessionId, model, body)
   }
 
   /** Write-approval modal: resolves true when the user allows the write. */

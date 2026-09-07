@@ -11,6 +11,7 @@
 import { ItemView, MarkdownRenderer, Notice, Modal, Component } from "obsidian"
 import type { App } from "obsidian"
 import type DshBridgePlugin from './main.ts'
+import type { TurnRecord } from './archive.ts'
 import {
   appendLiveRow,
   completeLastTool,
@@ -56,6 +57,8 @@ export class DshChatView extends ItemView {
   private sendBtn: HTMLButtonElement | null = null
   private statusEl: HTMLElement | null = null
   private pendingQuestion: PendingQuestion | null = null
+  private sessionTitle: string | null = null
+  private currentTurn: TurnRecord | null = null
   private catalog: ModelCatalogView | null = null
   private selectedModel: ModelSelectionView | null = null
   private modelSelectEl: HTMLSelectElement | null = null
@@ -214,8 +217,21 @@ export class DshChatView extends ItemView {
     const seq = this.nextSeqValue
     this.nextSeqValue += 1
     switch (event.type) {
+      case 'session/title': {
+        const title = this.titleFromEvent(event)
+        if (title !== null) this.sessionTitle = title
+        break
+      }
       case 'turn/start':
         this.busy = true
+        this.currentTurn = {
+          sessionId: payload.sessionId,
+          sessionTitle: this.sessionTitle,
+          model: this.selectedModel?.model ?? null,
+          userText: '',
+          assistantText: '',
+          toolLines: [],
+        }
         this.updateSendButton()
         break
       case 'turn/end':
@@ -223,11 +239,15 @@ export class DshChatView extends ItemView {
         this.rows = completeLastTool(this.rows, seq)
         this.renderRows()
         this.updateSendButton()
+        this.flushTurnArchive()
         break
-      case 'tool/call':
-        this.rows = appendLiveRow(this.rows, 'tool', toolSummary(event.data?.name ?? 'tool', event.data?.arguments), seq)
+      case 'tool/call': {
+        const summary = toolSummary(event.data?.name ?? 'tool', event.data?.arguments)
+        this.rows = appendLiveRow(this.rows, 'tool', summary, seq)
+        this.currentTurn?.toolLines.push(summary)
         this.renderRows()
         break
+      }
       case 'tool/result':
         this.rows = completeLastTool(this.rows, seq)
         this.renderRows()
@@ -237,6 +257,11 @@ export class DshChatView extends ItemView {
         const row = rowFromEvent(event)
         if (row === null) break
         this.rows = appendLiveRow(this.rows, row.kind, row.text, seq)
+        if (this.currentTurn !== null) {
+          if (row.kind === 'user') this.currentTurn.userText = row.text
+          else if (this.currentTurn.assistantText !== '') this.currentTurn.assistantText += `\n\n${row.text}`
+          else this.currentTurn.assistantText = row.text
+        }
         this.renderRows()
         break
       }
@@ -245,10 +270,51 @@ export class DshChatView extends ItemView {
     }
   }
 
+  /** Defensive title reader for the `session/title` event (shape not contractual). */
+  private titleFromEvent(event: SessionEventView): string | null {
+    const data = event.data as { title?: unknown; name?: unknown } | undefined
+    for (const candidate of [data?.title, data?.name]) {
+      if (typeof candidate === 'string' && candidate.trim() !== '') return candidate.trim()
+    }
+    return null
+  }
+
+  /** Append the finished turn to the vault archive when enabled. */
+  private flushTurnArchive(): void {
+    const turn = this.currentTurn
+    this.currentTurn = null
+    if (turn === null || this.plugin.settings.conversationArchive !== 'turn') return
+    if (turn.userText.trim() === '' && turn.assistantText.trim() === '') return
+    void this.plugin.archiveTurn(turn)
+  }
+
+  /** Manual archive: export the whole rendered conversation as one note. */
+  async exportCurrentConversation(): Promise<void> {
+    if (this.rows.length === 0) {
+      new Notice('当前对话为空')
+      return
+    }
+    const body = this.rows.map((row) => {
+      if (row.kind === 'user') return `🧑 **你**：${row.text}`
+      if (row.kind === 'assistant') return `🤖 **DSH**：\n\n${row.text}`
+      if (row.kind === 'tool') return `> 🔧 ${row.text}`
+      return `ℹ️ ${row.text}`
+    }).join('\n\n')
+    const path = await this.plugin.archiveExport(
+      this.sessionTitle ?? '未命名对话',
+      this.sessionId ?? '无会话',
+      this.selectedModel?.model ?? null,
+      body,
+    )
+    new Notice(`已导出对话：${path}`)
+  }
+
   async startNewChat(): Promise<void> {
     this.sessionId = null
     this.busy = false
     this.rows = []
+    this.sessionTitle = null
+    this.currentTurn = null
     this.nextSeqValue = 1
     this.renderRows()
     this.updateSendButton()

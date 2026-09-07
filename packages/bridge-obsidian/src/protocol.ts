@@ -70,6 +70,16 @@ export interface BridgeCaps {
   searchLimit: number
 }
 
+/** One vault skill published by the connected Obsidian client. */
+export interface VaultSkillEntry {
+  /** Skill name from SKILL.md frontmatter (defaults to the folder name). */
+  name: string
+  /** Trigger description; the model reads the full file only when relevant. */
+  description: string
+  /** Vault-relative path of the SKILL.md file. */
+  path: string
+}
+
 /** Frames sent by the Obsidian client to the bridge plugin. */
 export type ClientFrame =
   /** First frame, within HELLO_TIMEOUT_MS of socket open. */
@@ -169,6 +179,10 @@ export function parseBridgeFrame(text: string): BridgeFrame | undefined {
       return isToolError(frame.error)
         ? { t: 'tool.result', id: frame.id, ok: false, error: frame.error }
         : undefined
+    case 'skills.manifest':
+      return Array.isArray(frame.skills) && frame.skills.every(isSkillEntry)
+        ? { t: 'skills.manifest', skills: frame.skills as VaultSkillEntry[] }
+        : undefined
     case 'pong':
       return { t: 'pong' }
     case 'hello.ok':
@@ -221,6 +235,14 @@ export function parseBridgeFrame(text: string): BridgeFrame | undefined {
     default:
       return undefined
   }
+}
+
+function isSkillEntry(value: unknown): value is VaultSkillEntry {
+  if (typeof value !== 'object' || value === null) return false
+  const entry = value as Record<string, unknown>
+  return typeof entry.name === 'string' && entry.name.length > 0
+    && typeof entry.description === 'string'
+    && typeof entry.path === 'string' && entry.path.length > 0
 }
 
 function isCaps(value: unknown): value is BridgeCaps {

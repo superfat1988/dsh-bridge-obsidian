@@ -40,6 +40,12 @@ ws.on('message', async (data) => {
   if (frame.t === 'hello.ok') {
     helloOk = true
     console.log('SMOKE: hello.ok caps=', JSON.stringify(frame.caps))
+    if (process.argv[4] === '--skills') {
+      ws.send(JSON.stringify({ t: 'skills.manifest', skills: [
+        { name: 'smoke-echo', description: '演示技能：把用户输入原样复述一遍。Use when the user asks for an echo test.', path: 'Deepseek Harness/skills/smoke-echo/SKILL.md' },
+      ] }))
+      console.log('SMOKE: skills.manifest sent')
+    }
     if (process.argv[4] === '--models') {
       const catalog = await rpc('session.modelCatalog', {})
       console.log('SMOKE: modelCatalog default=', JSON.stringify(catalog.default))
@@ -60,7 +66,9 @@ ws.on('message', async (data) => {
       console.log('SMOKE: session created:', sessionId)
       const promptText = process.argv[4] === '--tools'
         ? '请用 obsidian_read_note 工具读取笔记 notes/test.md，然后用一句话告诉我天气如何。'
-        : '请只回复两个字：收到'
+        : process.argv[4] === '--skills'
+          ? '当前连接的 vault 里发布了哪些 skills？列出名字和用途即可，不要读取文件。'
+          : '请只回复两个字：收到'
       const promptRes = await rpc('session.prompt', {
         sessionId,
         mode: 'queue',
@@ -98,7 +106,7 @@ ws.on('message', async (data) => {
       let detail = ''
       if (kind === 'assistant/message') {
         const blocks = ev.data?.message?.content
-        detail = Array.isArray(blocks) ? blocks.map(b => b?.text ?? '').join('').slice(0, 80) : ''
+        detail = Array.isArray(blocks) ? blocks.map(b => b?.text ?? '').join('').slice(0, 400) : ''
       } else if (kind === 'user/message') {
         const blocks = ev.data?.content
         detail = Array.isArray(blocks) ? blocks.map(b => b?.text ?? '').join('').slice(0, 60) : ''
@@ -133,13 +141,18 @@ ws.on('message', async (data) => {
     // Simulated Obsidian executor: canned vault answers to validate the
     // tool round-trip (tool.call → client → tool.result → model).
     console.log(`SMOKE: tool.call ${frame.name} ${JSON.stringify(frame.args).slice(0, 120)}`)
-    const canned = {
-      obsidian_read_note: { text: '# notes/test.md\n\n今天天气很好，适合散步。' },
-      obsidian_write_note: { text: 'Created notes/test.md (24 chars).' },
-      obsidian_list_notes: { text: 'notes/test.md (24B)' },
-      obsidian_search_vault: { text: 'notes/test.md:3: 今天天气很好' },
+    const folder = String(frame.args?.['folder'] ?? '')
+    const path = String(frame.args?.['path'] ?? '')
+    let result
+    if (frame.name === 'obsidian_read_note' && path.includes('SKILL.md')) {
+      result = { text: '---\nname: smoke-echo\ndescription: 演示技能\n---\n\n# smoke-echo\n\n当用户要求 echo 测试时：把用户消息原样复述一遍，前后加 [ECHO]。' }
+    } else if (frame.name === 'obsidian_list_notes' && folder.startsWith('Deepseek Harness/skills')) {
+      result = { text: 'Deepseek Harness/skills/smoke-echo/SKILL.md (156B)' }
+    } else if (frame.name === 'obsidian_read_note') {
+      result = { text: '# notes/test.md\n\n今天天气很好，适合散步。' }
+    } else {
+      result = { text: `smoke stub for ${frame.name}` }
     }
-    const result = canned[frame.name] ?? { text: `smoke stub for ${frame.name}` }
     setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ t: 'tool.result', id: frame.id, ok: true, result }))

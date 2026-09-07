@@ -32,6 +32,7 @@ import {
   type BridgeFrame,
   type ClientFrame,
   type ToolErrorCode,
+  type VaultSkillEntry,
 } from './protocol.ts'
 import { verifyToken } from './token.ts'
 
@@ -96,6 +97,8 @@ export interface BridgeServerDeps {
   helloTimeoutMs?: number
   /** Server ping cadence; defaults to PING_INTERVAL_MS. */
   pingIntervalMs?: number
+  /** Invoked after a client-driven `session.create` settles with a session id. */
+  onSessionCreated?: (sessionId: string) => void
 }
 
 /** One in-flight tool call awaiting the client's `tool.result`. */
@@ -113,6 +116,10 @@ interface ReadyConnection {
   abort: AbortController
   pump: Promise<void>
   ping: NodeJS.Timeout
+  /** Vault skills manifest published by this client; null until one arrives. */
+  skills: VaultSkillEntry[] | null
+  /** Vault name presented in `hello`. */
+  vaultName: string
 }
 
 function sendFrame(ws: WebSocket, frame: BridgeFrame): void {
@@ -140,6 +147,8 @@ export class BridgeServer {
   private current: ReadyConnection | null = null
   private readonly pendingTools = new Map<string, PendingTool>()
   private readonly orderedSessionRpcs = new Map<string, Promise<void>>()
+  /** Vault name from the latest `hello` (consumed at promotion). */
+  private pendingVaultName = 'vault'
   private closed = false
 
   constructor(private readonly deps: BridgeServerDeps) {}
@@ -275,6 +284,7 @@ export class BridgeServer {
         }
         clearTimeout(helloTimer)
         helloTimer = undefined
+        this.pendingVaultName = frame.vaultName
         this.promote(ws, remoteAddress)
         return
       }
@@ -313,7 +323,7 @@ export class BridgeServer {
         }
       }
     })()
-    this.current = { ws, remoteAddress, abort, pump, ping }
+    this.current = { ws, remoteAddress, abort, pump, ping, skills: null, vaultName: this.pendingVaultName }
     sendFrame(ws, { t: 'hello.ok', caps: this.deps.caps })
     ws.once('close', () => {
       clearInterval(ping)
@@ -331,6 +341,9 @@ export class BridgeServer {
         break
       case 'tool.result':
         this.settleTool(frame.id, frame.ok, frame.ok ? frame.result : frame.error)
+        break
+      case 'skills.manifest':
+        if (this.current !== null) this.current.skills = frame.skills
         break
       case 'pong':
       case 'hello':
@@ -391,9 +404,23 @@ export class BridgeServer {
         ok: true,
         result: { type: 'server-response', rpcId: frame.id, result },
       })
+      if (frame.method === 'session.create' && result.ok) {
+        const sessionId = sessionIdFromValue(result.value)
+        if (sessionId !== undefined) this.deps.onSessionCreated?.(sessionId)
+      }
     } catch (error: unknown) {
       sendFrame(conn.ws, { t: 'rpc.result', id: frame.id, ok: false, error: { code: 'internal', message: String(error) } })
     }
+  }
+
+  /** @returns the connected client's vault skills manifest, or null. */
+  currentSkills(): VaultSkillEntry[] | null {
+    return this.current?.skills ?? null
+  }
+
+  /** @returns the connected client's vault name, or null when offline. */
+  currentVaultName(): string | null {
+    return this.current?.vaultName ?? null
   }
 
   /** Relay a pending Host waterfall response through the active adapter. */
@@ -433,6 +460,15 @@ export class BridgeServer {
       pending.reject(new BridgeToolError('bridge-closed', 'the Obsidian client connection was replaced'))
     }
   }
+}
+
+function sessionIdFromValue(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 0) return value
+  if (typeof value === 'object' && value !== null
+    && typeof (value as Record<string, unknown>).sessionId === 'string') {
+    return (value as { sessionId: string }).sessionId
+  }
+  return undefined
 }
 
 function orderedSessionId(frame: Extract<ClientFrame, { t: 'rpc' }>): string | undefined {

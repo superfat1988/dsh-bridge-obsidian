@@ -15,6 +15,7 @@ import {
   parseBridgeFrame,
   type BridgeCaps,
   type RespondResult,
+  type VaultSkillEntry,
 } from './protocol.ts'
 
 /** Fetch the bridge wsUrl from the discovery endpoint; fall back to derivation. */
@@ -122,6 +123,13 @@ export class BridgeClient {
     if (ws === null || ws.readyState !== WebSocket.OPEN) return
     const id = crypto.randomUUID()
     ws.send(JSON.stringify({ t: 'respond', id, rpcId, result }))
+  }
+
+  /** Publish the vault skills manifest; the bridge injects it into bridge-owned sessions. */
+  sendSkillsManifest(skills: VaultSkillEntry[]): void {
+    const ws = this.ws
+    if (ws === null || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ t: 'skills.manifest', skills }))
   }
 
   private reconnect(delayMs: number): void {

@@ -20,11 +20,13 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-agent'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import { BridgeServer } from './server.ts'
 import { registerVaultTools } from './tools.ts'
+import { VaultSkillsInjector, formatVaultSkillsText } from './skills-injector.ts'
 import {
   BRIDGE_CONFIG_PATH,
   BRIDGE_PATH,
@@ -39,7 +41,7 @@ import { createHostApi } from './host-adapter.ts'
 export const name = 'bridge-obsidian'
 
 /** Services required by this plugin. */
-export const inject = ['webServer', 'typertGateway', 'connection', 'tools']
+export const inject = ['webServer', 'typertGateway', 'connection', 'tools', 'agents']
 
 /** Plugin config: deployment-varying tunables only; the wire contract stays fixed. */
 export interface Config {
@@ -95,6 +97,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const tokenRes = await resolveToken(resolved.token)
   const api = createHostApi(ctx)
 
+  // Vault skills are bridge-session-scoped: when a client-created session
+  // materializes, inject that connection's manifest once so the model can
+  // pull SKILL.md files on demand via obsidian_read_note.
+  const skillsInjector = new VaultSkillsInjector(ctx.agents)
+  ctx.on('agent/session-start', ({ agent }) => { skillsInjector.activate(agent) })
+
   const server = new BridgeServer({
     token: tokenRes.token,
     api,
@@ -102,6 +110,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     caps: {
       maxReadChars: resolved.maxReadChars,
       searchLimit: resolved.searchLimit,
+    },
+    onSessionCreated: (sessionId) => {
+      const skills = server.currentSkills()
+      if (skills !== null && skills.length > 0) {
+        const vaultName = server.currentVaultName() ?? 'vault'
+        skillsInjector.inject(sessionId, formatVaultSkillsText(skills, vaultName))
+      }
     },
   })
 
