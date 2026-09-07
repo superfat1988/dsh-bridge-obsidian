@@ -200,8 +200,20 @@ export class BridgeClient {
         if (pending === undefined) break
         clearTimeout(pending.timer)
         this.rpcs.delete(frame.id)
-        if (frame.ok) pending.resolve(frame.result)
-        else pending.reject(new Error(frame.error.message))
+        if (!frame.ok) {
+          pending.reject(new Error(frame.error?.message ?? 'rpc failed'))
+          break
+        }
+        // The bridge relays the gateway's ServerResponse envelope verbatim
+        // ({ type, rpcId, result: { ok, value | error } }); unwrap the value
+        // so callers get the business payload, and surface business errors.
+        const envelope = frame.result as { result?: { ok?: boolean; value?: unknown; error?: { message?: string } } } | undefined
+        const business = envelope?.result
+        if (business?.ok === false) {
+          pending.reject(new Error(business.error?.message ?? 'rpc failed'))
+        } else {
+          pending.resolve(business?.value as T)
+        }
         break
       }
       case 'event':

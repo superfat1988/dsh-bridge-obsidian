@@ -1,0 +1,106 @@
+/* dsh-bridge-obsidian chat panel */
+
+.dsh-chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  gap: 8px;
+}
+
+.dsh-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dsh-chat-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.dsh-chat-status.is-ok { color: var(--text-success); }
+.dsh-chat-status.is-bad { color: var(--text-error); }
+
+.dsh-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+}
+
+.dsh-chat-row { display: flex; }
+.dsh-chat-user { justify-content: flex-end; }
+.dsh-chat-assistant { justify-content: flex-start; }
+
+.dsh-chat-bubble {
+  max-width: 88%;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+.dsh-chat-user .dsh-chat-bubble {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  white-space: pre-wrap;
+}
+.dsh-chat-assistant .dsh-chat-bubble {
+  background: var(--background-secondary);
+}
+
+.dsh-chat-tool {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  padding: 1px 6px;
+}
+
+.dsh-chat-info {
+  font-size: 12px;
+  color: var(--text-error);
+  padding: 2px 6px;
+}
+
+.dsh-chat-working {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  animation: dsh-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dsh-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.dsh-chat-input-area {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.dsh-chat-input {
+  flex: 1;
+  resize: none;
+  min-height: 60px;
+}
+
+.dsh-question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dsh-write-preview {
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: var(--background-secondary);
+  padding: 8px;
+  border-radius: 6px;
+}
