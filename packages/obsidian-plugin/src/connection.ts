@@ -212,7 +212,7 @@ export class BridgeClient {
         if (business?.ok === false) {
           pending.reject(new Error(business.error?.message ?? 'rpc failed'))
         } else {
-          pending.resolve(business?.value as T)
+          pending.resolve(business?.value)
         }
         break
       }
