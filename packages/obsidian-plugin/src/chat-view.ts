@@ -8,8 +8,9 @@
  * @module
  */
 
-import { ItemView, MarkdownRenderer, Notice, Modal, Component } from "obsidian"
+import { ItemView, MarkdownRenderer, Notice, Modal, Component, Setting, setIcon } from "obsidian"
 import type { App } from "obsidian"
+import { DSH_MARK_SVG } from './icon.ts'
 import type DshBridgePlugin from './main.ts'
 import type { TurnRecord } from './archive.ts'
 import {
@@ -82,18 +83,26 @@ export class DshChatView extends ItemView {
     content.empty()
     content.addClass('dsh-chat-container')
 
-    const header = content.createDiv({ cls: 'dsh-chat-header' })
-    this.statusEl = header.createSpan({ cls: 'dsh-chat-status', text: '连接中…' })
-    this.modelSelectEl = header.createEl('select', { cls: 'dsh-model-select' })
-    this.modelSelectEl.createEl('option', { text: '模型…', attr: { value: '' } })
-    this.modelSelectEl.onchange = () => { void this.applySelectedModel() }
-    const newChatBtn = header.createEl('button', { text: '新对话', cls: 'dsh-chat-new-btn' })
-    newChatBtn.onclick = () => { void this.startNewChat() }
-
+    // Output window (top): conversation rows; empty state shows the DSH mark.
     this.messagesEl = content.createDiv({ cls: 'dsh-chat-messages' })
 
-    const inputArea = content.createDiv({ cls: 'dsh-chat-input-area' })
-    this.inputEl = inputArea.createEl('textarea', {
+    // Toolbar row above the input, Copilot-style: status left, icons right.
+    const toolbar = content.createDiv({ cls: 'dsh-chat-toolbar' })
+    this.statusEl = toolbar.createSpan({ cls: 'dsh-chat-status', text: '连接中…' })
+    const tools = toolbar.createDiv({ cls: 'dsh-chat-tools' })
+    const newChatBtn = tools.createEl('div', { cls: 'dsh-tool-icon', attr: { 'aria-label': '新对话（新建一个 DSH 会话）', title: '新对话' } })
+    setIcon(newChatBtn, 'plus')
+    newChatBtn.onclick = () => { void this.startNewChat() }
+    const settingsBtn = tools.createEl('div', { cls: 'dsh-tool-icon', attr: { 'aria-label': '聊天设置（存档与写审批）', title: '聊天设置' } })
+    setIcon(settingsBtn, 'settings')
+    settingsBtn.onclick = () => { void new ChatSettingsModal(this.app, this.plugin).open() }
+    const historyBtn = tools.createEl('div', { cls: 'dsh-tool-icon', attr: { 'aria-label': '历史会话（从 DSH 恢复）', title: '历史会话' } })
+    setIcon(historyBtn, 'history')
+    historyBtn.onclick = () => { void new HistoryModal(this.app, this.plugin, this).open() }
+
+    // Input box with the model picker and circular send button inside.
+    const inputBox = content.createDiv({ cls: 'dsh-chat-input-box' })
+    this.inputEl = inputBox.createEl('textarea', {
       cls: 'dsh-chat-input',
       attr: { placeholder: '向 DSH 提问，或让它修改笔记…（Enter 发送，Shift+Enter 换行）', rows: '3' },
     })
@@ -103,7 +112,13 @@ export class DshChatView extends ItemView {
         void this.send()
       }
     }
-    this.sendBtn = inputArea.createEl('button', { text: '发送', cls: 'dsh-chat-send mod-cta' })
+    const inputRow = inputBox.createDiv({ cls: 'dsh-chat-input-row' })
+    this.modelSelectEl = inputRow.createEl('select', { cls: 'dsh-model-select' })
+    this.modelSelectEl.createEl('option', { text: '模型…', attr: { value: '' } })
+    this.modelSelectEl.onchange = () => { void this.applySelectedModel() }
+    this.sendBtn = inputRow.createEl('button', { cls: 'dsh-chat-send', attr: { 'aria-label': '发送', title: '发送' } })
+    setIcon(this.sendBtn, 'arrow-up')
+
     this.sendBtn.onclick = () => { void this.send() }
 
     this.renderRows()
@@ -387,16 +402,33 @@ export class DshChatView extends ItemView {
     }
   }
 
+  /** Bind the panel to an existing Host session and render its history. */
+  async restoreSession(sessionId: string): Promise<void> {
+    this.sessionId = sessionId
+    this.rows = []
+    this.sessionTitle = null
+    this.nextSeqValue = 1
+    await this.refreshHistory()
+    if (this.rows.length === 0) new Notice('该会话没有可恢复的内容')
+  }
+
   private updateSendButton(): void {
     if (this.sendBtn === null) return
-    this.sendBtn.setText(this.busy ? '工作中…' : '发送')
     this.sendBtn.disabled = this.busy
+    setIcon(this.sendBtn, this.busy ? 'loader' : 'arrow-up')
   }
 
   private renderRows(): void {
     const container = this.messagesEl
     if (container === null) return
     container.empty()
+    if (this.rows.length === 0) {
+      const empty = container.createDiv({ cls: 'dsh-chat-empty' })
+      const mark = empty.createDiv({ cls: 'dsh-chat-empty-mark' })
+      mark.innerHTML = DSH_MARK_SVG
+      empty.createDiv({ cls: 'dsh-chat-empty-caption', text: 'DeepSeek Harness' })
+      return
+    }
     for (const row of this.rows) {
       if (row.kind === 'tool') {
         const toolEl = container.createDiv({ cls: 'dsh-chat-tool' })
@@ -479,3 +511,114 @@ class QuestionModal extends Modal {
 
 /** Exported for main.ts: expose the text-block helper used by vault summaries. */
 export { textFromBlocks }
+
+
+/** Per-chat quick settings: archive mode and agent write approval. */
+class ChatSettingsModal extends Modal {
+  private readonly plugin: DshBridgePlugin
+
+  constructor(app: App, plugin: DshBridgePlugin) {
+    super(app)
+    this.plugin = plugin
+  }
+
+  onOpen(): void {
+    const { contentEl } = this
+    contentEl.empty()
+    contentEl.createEl('h3', { text: '聊天设置' })
+    contentEl.createEl('p', {
+      text: '以下设置对本插件全局生效；系统提示词由 DSH 主机的 skills 与 system prompt 管理，不在面板内覆盖。',
+      cls: 'dsh-modal-hint',
+    })
+
+    new Setting(contentEl)
+      .setName('会话存档')
+      .setDesc('每轮自动追加到 Deepseek Harness/ 存档')
+      .addDropdown(dropdown => dropdown
+        .addOption('off', '关闭')
+        .addOption('turn', '每轮自动追加')
+        .addOption('manual', '仅手动')
+        .setValue(this.plugin.settings.conversationArchive)
+        .onChange(async value => {
+          this.plugin.settings.conversationArchive = value as 'off' | 'turn' | 'manual'
+          await this.plugin.saveSettings()
+        }))
+
+    new Setting(contentEl)
+      .setName('写入审批')
+      .setDesc('agent 写入/新建笔记前是否弹窗确认')
+      .addDropdown(dropdown => dropdown
+        .addOption('ask', '询问')
+        .addOption('auto', '自动')
+        .setValue(this.plugin.settings.writeApproval)
+        .onChange(async value => {
+          this.plugin.settings.writeApproval = value as 'ask' | 'auto'
+          await this.plugin.saveSettings()
+        }))
+  }
+
+  onClose(): void {
+    this.contentEl.empty()
+  }
+}
+
+interface SessionListEntry {
+  sessionId: string
+  updatedAt?: number
+  running?: boolean
+  blank?: boolean
+}
+
+/** Restore a past DSH session: pick one from the Host session list. */
+class HistoryModal extends Modal {
+  private readonly plugin: DshBridgePlugin
+  private readonly view: DshChatView
+
+  constructor(app: App, plugin: DshBridgePlugin, view: DshChatView) {
+    super(app)
+    this.plugin = plugin
+    this.view = view
+  }
+
+  onOpen(): void {
+    const { contentEl } = this
+    contentEl.empty()
+    contentEl.createEl('h3', { text: '历史会话' })
+    const list = contentEl.createDiv({ cls: 'dsh-history-list' })
+    list.setText('加载中…')
+    void this.plugin.client.rpc<{ items?: SessionListEntry[] }>('session.list', {})
+      .then((value) => {
+        list.empty()
+        const items = (value.items ?? [])
+          .filter(item => item.blank !== true)
+          .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+          .slice(0, 30)
+        if (items.length === 0) {
+          list.setText('暂无历史会话')
+          return
+        }
+        for (const item of items) {
+          const row = list.createDiv({ cls: 'dsh-history-row' })
+          const when = item.updatedAt !== undefined
+            ? new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false })
+            : '未知时间'
+          const title = row.createDiv({ cls: 'dsh-history-title' })
+          title.setText(`${item.running === true ? '🟢 ' : ''}${when}`)
+          title.setAttribute('aria-label', item.sessionId)
+          const tail = row.createDiv({ cls: 'dsh-history-id' })
+          tail.setText(item.sessionId.slice(0, 20) + '…')
+          row.onclick = () => {
+            void this.view.restoreSession(item.sessionId)
+            this.close()
+          }
+        }
+      })
+      .catch((error) => {
+        list.setText(`加载失败：${error instanceof Error ? error.message : String(error)}`)
+      })
+  }
+
+  onClose(): void {
+    this.contentEl.empty()
+  }
+}
