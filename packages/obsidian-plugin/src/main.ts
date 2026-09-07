@@ -8,10 +8,11 @@
  * @module
  */
 
-import { Modal, Notice, Plugin, TFile } from "obsidian"
+import { Modal, Notice, Plugin, TFile, addIcon } from "obsidian"
 import type { App } from "obsidian"
 import { DshChatView, VIEW_TYPE_DSH_CHAT } from './chat-view.ts'
 import { BridgeClient, discoverBridgeUrl, type ToolCallRequest } from './connection.ts'
+import { DSH_MARK_SVG } from './icon.ts'
 import { DEFAULT_SETTINGS, DshBridgeSettingTab, type DshBridgeSettings } from './settings.ts'
 import { executeToolCall } from './vault.ts'
 
@@ -22,6 +23,8 @@ export default class DshBridgePlugin extends Plugin {
 
   override async onload(): Promise<void> {
     await this.loadSettings()
+    // Register the DSH monochrome mark before any view/ribbon uses it.
+    addIcon('dsh-mark', DSH_MARK_SVG)
     this.addSettingTab(new DshBridgeSettingTab(this.app, this))
 
     // Vault tool executor: runs in the client, gated by the approval setting.
@@ -54,7 +57,7 @@ export default class DshBridgePlugin extends Plugin {
       return this.chatView
     })
 
-    const ribbon = this.addRibbonIcon("bot", "打开 DSH 对话", () => {
+    const ribbon = this.addRibbonIcon("dsh-mark", "打开 DSH 对话", () => {
       void this.activateView()
     })
     ribbon.addClass('dsh-bridge-ribbon')

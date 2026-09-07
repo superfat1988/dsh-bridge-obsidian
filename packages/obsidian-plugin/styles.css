@@ -104,3 +104,9 @@
   padding: 8px;
   border-radius: 6px;
 }
+
+.dsh-model-select {
+  max-width: 200px;
+  font-size: 12px;
+  margin-left: auto;
+}

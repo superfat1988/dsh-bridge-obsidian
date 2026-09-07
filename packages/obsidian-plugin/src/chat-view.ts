@@ -32,6 +32,18 @@ interface HistoryPage {
   hasMore?: boolean
 }
 
+interface ModelSelectionView {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+interface ModelCatalogView {
+  default: ModelSelectionView
+  groups: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>
+  failures?: Array<{ id: string; name: string; message: string }>
+}
+
 export class DshChatView extends ItemView {
   private readonly plugin: DshBridgePlugin
   private readonly markdownComponent = new Component()
@@ -44,6 +56,9 @@ export class DshChatView extends ItemView {
   private sendBtn: HTMLButtonElement | null = null
   private statusEl: HTMLElement | null = null
   private pendingQuestion: PendingQuestion | null = null
+  private catalog: ModelCatalogView | null = null
+  private selectedModel: ModelSelectionView | null = null
+  private modelSelectEl: HTMLSelectElement | null = null
 
   constructor(leaf: ItemView['leaf'], plugin: DshBridgePlugin) {
     super(leaf)
@@ -52,7 +67,7 @@ export class DshChatView extends ItemView {
 
   getViewType(): string { return VIEW_TYPE_DSH_CHAT }
   getDisplayText(): string { return 'DSH 对话' }
-  getIcon(): string { return 'bot' }
+  getIcon(): string { return 'dsh-mark' }
 
   /** @returns the vault name presented in hello. */
   get vaultName(): string {
@@ -66,6 +81,9 @@ export class DshChatView extends ItemView {
 
     const header = content.createDiv({ cls: 'dsh-chat-header' })
     this.statusEl = header.createSpan({ cls: 'dsh-chat-status', text: '连接中…' })
+    this.modelSelectEl = header.createEl('select', { cls: 'dsh-model-select' })
+    this.modelSelectEl.createEl('option', { text: '模型…', attr: { value: '' } })
+    this.modelSelectEl.onchange = () => { void this.applySelectedModel() }
     const newChatBtn = header.createEl('button', { text: '新对话', cls: 'dsh-chat-new-btn' })
     newChatBtn.onclick = () => { void this.startNewChat() }
 
@@ -101,10 +119,72 @@ export class DshChatView extends ItemView {
       this.statusEl.setText(`已连接 · ${this.vaultName}`)
       this.statusEl.addClass('is-ok')
       this.statusEl.removeClass('is-bad')
+      if (this.catalog === null) void this.loadCatalog()
     } else {
       this.statusEl.setText('未连接 — 检查设置中的地址与 token')
       this.statusEl.addClass('is-bad')
       this.statusEl.removeClass('is-ok')
+    }
+  }
+
+  /** Fetch the host model catalog and populate the selector. */
+  private async loadCatalog(): Promise<void> {
+    const select = this.modelSelectEl
+    if (select === null) return
+    try {
+      const catalog = await this.plugin.client.rpc<ModelCatalogView>('session.modelCatalog', {})
+      this.catalog = catalog
+      select.empty()
+      const selection = this.selectedModel ?? catalog.default
+      const valueOf = (sel: ModelSelectionView): string => JSON.stringify({ provider: sel.provider, model: sel.model })
+      let matched = false
+      for (const group of catalog.groups ?? []) {
+        if (group.models.length === 0) continue
+        const optgroup = select.createEl('optgroup', { attr: { label: group.name } })
+        for (const model of group.models) {
+          const value = valueOf({ provider: group.id, model: model.id })
+          const option = optgroup.createEl('option', { text: model.name, attr: { value } })
+          if (value === valueOf(selection)) {
+            option.selected = true
+            matched = true
+          }
+        }
+      }
+      if (!matched) {
+        const option = select.createEl('option', {
+          text: `${selection.provider}/${selection.model}`,
+          attr: { value: valueOf(selection) },
+        })
+        option.selected = true
+      }
+      this.selectedModel = selection
+    } catch (error) {
+      console.warn('[dsh-bridge] model catalog unavailable:', error)
+    }
+  }
+
+  /** Apply the dropdown selection: immediately for a live session, or stash it for the next one. */
+  private async applySelectedModel(): Promise<void> {
+    const select = this.modelSelectEl
+    if (select === null || select.value === '') return
+    let parsed: ModelSelectionView
+    try {
+      parsed = JSON.parse(select.value) as ModelSelectionView
+    } catch {
+      return
+    }
+    this.selectedModel = parsed
+    if (this.sessionId === null) return
+    try {
+      const result = await this.plugin.client.rpc<{ selected?: ModelSelectionView }>('session.selectModel', {
+        sessionId: this.sessionId,
+        provider: parsed.provider,
+        model: parsed.model,
+      })
+      if (result?.selected !== undefined) this.selectedModel = result.selected
+      new Notice(`模型已切换：${result?.selected?.model ?? parsed.model}`)
+    } catch (error) {
+      new Notice(`模型切换失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -192,6 +272,17 @@ export class DshChatView extends ItemView {
           ? created.sessionId
           : String(created)
         this.sessionId = createdId
+        // A fresh session starts on the catalog default; re-apply the picker's
+        // selection before the first prompt lands.
+        if (this.selectedModel !== null
+          && (this.selectedModel.provider !== this.catalog?.default.provider
+            || this.selectedModel.model !== this.catalog?.default.model)) {
+          await this.plugin.client.rpc('session.selectModel', {
+            sessionId: this.sessionId,
+            provider: this.selectedModel.provider,
+            model: this.selectedModel.model,
+          })
+        }
       }
       await this.plugin.client.rpc('session.prompt', {
         sessionId: this.sessionId,

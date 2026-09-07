@@ -594,6 +594,8 @@ function invokeTarget(call: HostRpcCall): InvokeTarget | { readonly error: HostR
   switch (call.method) {
     case 'session.list':
       return { namespace: 'session', method: 'list', args: { _request: call.payload } }
+    case 'session.modelCatalog':
+      return { namespace: 'session', method: 'modelCatalog', args: {} }
     case 'session.create':
     case 'session.selectModel':
     case 'session.attachment':

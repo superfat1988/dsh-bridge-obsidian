@@ -40,6 +40,18 @@ ws.on('message', async (data) => {
   if (frame.t === 'hello.ok') {
     helloOk = true
     console.log('SMOKE: hello.ok caps=', JSON.stringify(frame.caps))
+    if (process.argv[4] === '--models') {
+      const catalog = await rpc('session.modelCatalog', {})
+      console.log('SMOKE: modelCatalog default=', JSON.stringify(catalog.default))
+      for (const group of catalog.groups ?? []) {
+        console.log(`SMOKE: provider ${group.id} (${group.name}): ${group.models.map(m => `${m.id}${m.reasoning ? '*' : ''}`).join(', ')}`)
+      }
+      for (const failure of catalog.failures ?? []) {
+        console.log(`SMOKE: provider FAILED ${failure.id}: ${failure.message}`)
+      }
+      clearTimeout(hardTimer)
+      process.exit(0)
+    }
     try {
       const created = await rpc('session.create', {})
       sessionId = typeof created === 'object' && created !== null && typeof created.sessionId === 'string'
