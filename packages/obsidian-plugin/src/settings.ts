@@ -20,6 +20,8 @@ export interface DshBridgeSettings {
   autoConnect: boolean
   /** Conversation archiving: off, append at every turn end, or manual command only. */
   conversationArchive: 'off' | 'turn' | 'manual'
+  /** Inject the currently open note's path into every prompt as context. */
+  injectActiveNote: boolean
   /** Vault folder for conversation archives and vault skills. */
   archiveFolder: string
 }
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: DshBridgeSettings = {
   autoConnect: true,
   conversationArchive: 'turn',
   archiveFolder: 'Deepseek Harness',
+  injectActiveNote: true,
 }
 
 export class DshBridgeSettingTab extends PluginSettingTab {
@@ -115,6 +118,16 @@ export class DshBridgeSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.archiveFolder)
         .onChange(async value => {
           this.plugin.settings.archiveFolder = value.trim().replace(/^\/+|\/+$/g, '') || 'Deepseek Harness'
+          await this.plugin.saveSettings()
+        }))
+
+    new Setting(containerEl)
+      .setName('注入当前笔记上下文')
+      .setDesc('发送时自动附上当前打开笔记的路径，"当前文档"类指令才能定位文件（推荐开启）')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.injectActiveNote)
+        .onChange(async value => {
+          this.plugin.settings.injectActiveNote = value
           await this.plugin.saveSettings()
         }))
 

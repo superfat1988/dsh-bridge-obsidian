@@ -501,6 +501,14 @@ export class DshChatView extends ItemView {
     new Notice('已开启新对话（首次发送时创建会话）')
   }
 
+  /** Context block prepended to prompts when a note is open in the editor. */
+  /** Context block prepended to prompts when a note is open in the editor. */
+  private buildContextPrefix(): string {
+    const active = this.app.workspace.getActiveFile()
+    if (active === null) return ''
+    return `<context>当前打开的笔记（vault 相对路径）：${active.path}\n如需读取或修改"当前文档"，直接对该路径使用 obsidian_read_note / obsidian_write_note。</context>\n\n`
+  }
+
   private async send(): Promise<void> {
     const input = this.inputEl
     if (input === null) return
@@ -522,10 +530,14 @@ export class DshChatView extends ItemView {
         // selection (model + effort) before the first prompt lands.
         await this.pushSelection()
       }
+      // Active-note context: "当前文档" instructions need a concrete path.
+      const promptText = this.plugin.settings.injectActiveNote
+        ? this.buildContextPrefix() + text
+        : text
       await this.plugin.client.rpc('session.prompt', {
         sessionId: this.sessionId,
         mode: 'queue',
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text: promptText }],
         clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       })
     } catch (error) {
