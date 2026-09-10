@@ -423,10 +423,15 @@ export class DshChatView extends ItemView {
     if (container === null) return
     container.empty()
     if (this.rows.length === 0) {
-      const empty = container.createDiv({ cls: 'dsh-chat-empty' })
-      const mark = empty.createDiv({ cls: 'dsh-chat-empty-mark' })
+      const card = container.createDiv({ cls: 'dsh-chat-empty' })
+      const mark = card.createDiv({ cls: 'dsh-chat-empty-mark' })
       mark.innerHTML = DSH_MARK_SVG
-      empty.createDiv({ cls: 'dsh-chat-empty-caption', text: 'DeepSeek Harness' })
+      // Explicit dimensions: renders correctly even if styles.css is stale.
+      const svgEl = mark.querySelector('svg')
+      svgEl?.setAttribute('width', '56')
+      svgEl?.setAttribute('height', '56')
+      card.createDiv({ cls: 'dsh-chat-empty-title', text: 'DeepSeek Harness' })
+      card.createDiv({ cls: 'dsh-chat-empty-sub', text: '向 DSH 提问，或让它读写你的笔记' })
       return
     }
     for (const row of this.rows) {

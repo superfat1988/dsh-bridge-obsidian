@@ -110,3 +110,17 @@
   font-size: 12px;
   margin-left: auto;
 }
+
+.dsh-model-select {
+  appearance: none;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-normal);
+  padding: 2px 4px;
+  max-width: 220px;
+  cursor: pointer;
+}
+.dsh-model-select:hover { color: var(--text-accent); }
