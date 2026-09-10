@@ -640,31 +640,100 @@ class QuestionModal extends Modal {
   private readonly plugin: DshBridgePlugin
   private readonly question: PendingQuestion
   private settled = false
+  /** Per-question state: selected option labels + custom text. */
+  private readonly selected: Set<string>[] = []
+  private readonly custom: string[] = []
 
   constructor(app: App, plugin: DshBridgePlugin, question: PendingQuestion) {
     super(app)
     this.plugin = plugin
     this.question = question
+    for (const item of question.items) {
+      this.selected.push(new Set())
+      this.custom.push('')
+    }
   }
 
   onOpen(): void {
+    this.renderContent()
+  }
+
+  private renderContent(): void {
     const { contentEl } = this
     contentEl.empty()
-    contentEl.createEl('h3', { text: this.question.header ?? 'DSH 请求确认' })
-    contentEl.createEl('p', { text: this.question.question })
+    contentEl.createEl('h3', { text: 'DSH 请求确认' })
+    for (const [index, item] of this.question.items.entries()) {
+      const block = contentEl.createDiv({ cls: 'dsh-question-block' })
+      if (this.question.items.length > 1 || item.header !== undefined) {
+        block.createEl('h4', { text: item.header ?? `问题 ${index + 1}` })
+      }
+      block.createEl('p', { text: item.question })
+
+      const options = block.createDiv({ cls: 'dsh-question-actions' })
+      for (const option of item.options) {
+        const isSelected = this.selected[index]?.has(option.label) === true
+        const button = options.createEl('button', {
+          text: option.label,
+          cls: `dsh-question-option${isSelected ? ' is-selected' : ''}`,
+        })
+        if (option.description !== undefined) button.setAttribute('aria-label', option.description)
+        button.onclick = () => {
+          const set = this.selected[index]
+          if (item.multiSelect) {
+            if (set.has(option.label)) set.delete(option.label)
+            else set.add(option.label)
+          } else {
+            set.clear()
+            set.add(option.label)
+          }
+          this.renderContent()
+        }
+      }
+
+      const customRow = block.createDiv({ cls: 'dsh-question-custom' })
+      const input = customRow.createEl('input', {
+        cls: 'dsh-question-input',
+        attr: { type: 'text', placeholder: '或输入自定义回答…', value: this.custom[index] ?? '' },
+      })
+      input.oninput = () => { this.custom[index] = input.value }
+    }
 
     const actions = contentEl.createDiv({ cls: 'dsh-question-actions' })
-    for (const option of this.question.options) {
-      const button = actions.createEl('button', { text: option.label, cls: 'mod-cta' })
-      if (option.description !== undefined) button.setAttribute('aria-label', option.description)
-      button.onclick = () => {
-        void this.settle({ ok: true, value: { answers: [{ id: this.question.questionId, selected: [option.label] }] } })
-      }
-    }
+    const submit = actions.createEl('button', { text: '提交回答', cls: 'mod-cta' })
+    if (!this.canSubmit()) submit.disabled = true
+    submit.onclick = () => { void this.submit() }
     const cancel = actions.createEl('button', { text: '取消' })
     cancel.onclick = () => {
       void this.settle({ ok: false, error: { code: 'cancelled', message: '用户取消了该请求', details: {} } })
     }
+  }
+
+  private canSubmit(): boolean {
+    return this.question.items.every((item, index) => {
+      const hasSelection = (this.selected[index]?.size ?? 0) > 0
+      const hasCustom = (this.custom[index] ?? '').trim() !== ''
+      return hasSelection || hasCustom
+    })
+  }
+
+  private async submit(): Promise<void> {
+    const answers = this.question.items.map((item, index) => {
+      const selected = Array.from(this.selected[index] ?? [])
+      const custom = (this.custom[index] ?? '').trim()
+      return {
+        id: item.id,
+        selected,
+        ...(custom !== '' ? { custom } : {}),
+      }
+    })
+    await this.settle({ ok: true, value: { answers } })
+  }
+
+  private async settle(result: Parameters<DshBridgePlugin['client']['respond']>[1]): Promise<void> {
+    if (this.settled) return
+    this.settled = true
+    await this.plugin.client.respond(this.question.rpcId, result)
+    this.close()
   }
 
   onClose(): void {
@@ -677,17 +746,7 @@ class QuestionModal extends Modal {
     }
     this.contentEl.empty()
   }
-
-  private async settle(result: Parameters<DshBridgePlugin['client']['respond']>[1]): Promise<void> {
-    if (this.settled) return
-    this.settled = true
-    await this.plugin.client.respond(this.question.rpcId, result)
-    this.close()
-  }
 }
-
-/** Exported for main.ts: expose the text-block helper used by vault summaries. */
-export { textFromBlocks }
 
 
 /** Per-chat quick settings: archive mode and agent write approval. */

@@ -1,0 +1,15 @@
+
+.dsh-question-block { margin-bottom: 14px; }
+.dsh-question-block h4 { margin: 6px 0; }
+.dsh-question-option.is-selected {
+  border-color: var(--interactive-accent);
+  color: var(--text-accent);
+}
+.dsh-question-custom { margin-top: 8px; }
+.dsh-question-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+}

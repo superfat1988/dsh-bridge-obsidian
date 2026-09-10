@@ -34,15 +34,21 @@ export interface EventFrameView {
   payload: unknown
 }
 
+/** One question inside an ask_user_question waterfall batch. */
+export interface QuestionItem {
+  /** Wire id of the question; echoed in the answers payload. */
+  id: string
+  question: string
+  header?: string
+  options: Array<{ label: string; description?: string }>
+  multiSelect: boolean
+}
+
 /** One pending interaction (ask_user_question waterfall) for a session. */
 export interface PendingQuestion {
   rpcId: string
   sessionId: string
-  /** Wire id of the first question item; echoed in the answers payload. */
-  questionId: string
-  question: string
-  header?: string
-  options: Array<{ label: string; description?: string }>
+  items: QuestionItem[]
 }
 
 export function pendingQuestionFromFrame(frame: EventFrameView): PendingQuestion | null {
@@ -50,30 +56,31 @@ export function pendingQuestionFromFrame(frame: EventFrameView): PendingQuestion
   const sessionId = frame.payload.sessionId
   const rawQuestions = frame.payload.questions
   if (typeof sessionId !== 'string' || !Array.isArray(rawQuestions) || rawQuestions.length === 0) return null
-  // v1 renders a single question per waterfall; batches are answered one by one.
-  const first = rawQuestions[0] as Record<string, unknown> | undefined
-  if (first === undefined || typeof first.question !== 'string' || typeof first.id !== 'string') return null
-  const options: Array<{ label: string; description?: string }> = []
-  if (Array.isArray(first.options)) {
-    for (const rawOption of first.options) {
-      if (typeof rawOption === 'object' && rawOption !== null && typeof (rawOption as { label?: unknown }).label === 'string') {
-        options.push({
-          label: (rawOption as { label: string }).label,
-          ...((rawOption as { description?: unknown }).description !== undefined
-            ? { description: (rawOption as { description: string }).description }
-            : {}),
-        })
+  const items: QuestionItem[] = []
+  for (const raw of rawQuestions) {
+    if (typeof raw !== 'object' || raw === null || typeof raw.question !== 'string' || typeof raw.id !== 'string') return null
+    const options: Array<{ label: string; description?: string }> = []
+    if (Array.isArray(raw.options)) {
+      for (const rawOption of raw.options) {
+        if (typeof rawOption === 'object' && rawOption !== null && typeof (rawOption as { label?: unknown }).label === 'string') {
+          options.push({
+            label: (rawOption as { label: string }).label,
+            ...((rawOption as { description?: unknown }).description !== undefined
+              ? { description: (rawOption as { description: string }).description }
+              : {}),
+          })
+        }
       }
     }
+    items.push({
+      id: raw.id,
+      question: raw.question,
+      options,
+      multiSelect: raw.multiSelect === true,
+      ...(typeof raw.header === 'string' ? { header: raw.header } : {}),
+    })
   }
-  return {
-    rpcId: frame.rpcId,
-    sessionId,
-    questionId: first.id,
-    question: first.question,
-    ...(typeof first.header === 'string' ? { header: first.header } : {}),
-    options,
-  }
+  return { rpcId: frame.rpcId, sessionId, items }
 }
 
 export function resolvedQuestionFromFrame(frame: EventFrameView): { sessionId: string; rpcId: string } | null {
