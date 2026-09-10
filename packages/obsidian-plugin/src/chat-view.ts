@@ -42,7 +42,18 @@ interface ModelSelectionView {
 
 interface ModelCatalogView {
   default: ModelSelectionView
-  groups: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>
+  groups: Array<{
+    id: string
+    name: string
+    models: Array<{
+      id: string
+      name: string
+      reasoning?: {
+        efforts: Array<{ id: string; name: string; description?: string }>
+        defaultEffort?: string
+      }
+    }>
+  }>
   failures?: Array<{ id: string; name: string; message: string }>
 }
 
@@ -62,7 +73,8 @@ export class DshChatView extends ItemView {
   private currentTurn: TurnRecord | null = null
   private catalog: ModelCatalogView | null = null
   private selectedModel: ModelSelectionView | null = null
-  private modelSelectEl: HTMLSelectElement | null = null
+  private modelChipEl: HTMLButtonElement | null = null
+  private modelPopoverEl: HTMLElement | null = null
 
   constructor(leaf: ItemView['leaf'], plugin: DshBridgePlugin) {
     super(leaf)
@@ -84,7 +96,9 @@ export class DshChatView extends ItemView {
     content.addClass('dsh-chat-container')
     // Critical layout is applied inline: styles.css is progressive polish,
     // never a load-bearing dependency (stale-cache-proof).
-    content.setCssStyles({ display: 'flex', flexDirection: 'column', height: '100%', padding: '10px', boxSizing: 'border-box', gap: '8px' })
+    // Bottom padding reserves space for Obsidian's floating status bar, which
+    // overlays view content in both docked-right and centered positions.
+    content.setCssStyles({ display: 'flex', flexDirection: 'column', height: '100%', padding: '10px 10px 40px', boxSizing: 'border-box', gap: '8px' })
 
     // Output window (top): conversation rows; empty state shows the DSH card.
     this.messagesEl = content.createDiv({ cls: 'dsh-chat-messages' })
@@ -127,10 +141,11 @@ export class DshChatView extends ItemView {
     }
     const inputRow = inputBox.createDiv({ cls: 'dsh-chat-input-row' })
     inputRow.setCssStyles({ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' })
-    this.modelSelectEl = inputRow.createEl('select', { cls: 'dsh-model-select' })
-    this.modelSelectEl.setCssStyles({ appearance: 'none', border: 'none', background: 'transparent', boxShadow: 'none', fontWeight: '600', fontSize: '13px', color: 'var(--text-normal)', maxWidth: '220px', cursor: 'pointer' })
-    this.modelSelectEl.createEl('option', { text: '模型…', attr: { value: '' } })
-    this.modelSelectEl.onchange = () => { void this.applySelectedModel() }
+    // DSH-style model chip: "model effort ^" pill that opens a popover menu.
+    this.modelChipEl = inputRow.createEl('button', { cls: 'dsh-model-chip', attr: { 'aria-label': '选择模型与推理等级', title: '选择模型与推理等级' } })
+    this.modelChipEl.setCssStyles({ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid var(--background-modifier-border)', background: 'var(--background-secondary)', borderRadius: '8px', padding: '3px 10px', fontSize: '13px', color: 'var(--text-normal)', cursor: 'pointer' })
+    this.renderModelChip()
+    this.modelChipEl.onclick = () => { this.toggleModelPopover() }
     this.sendBtn = inputRow.createEl('button', { cls: 'dsh-chat-send', attr: { 'aria-label': '发送', title: '发送' } })
     this.sendBtn.setCssStyles({ marginLeft: 'auto', width: '30px', height: '30px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0', border: 'none', background: 'var(--interactive-accent)', color: 'var(--text-on-accent)', cursor: 'pointer' })
     setIcon(this.sendBtn, 'arrow-up')
@@ -161,62 +176,194 @@ export class DshChatView extends ItemView {
     }
   }
 
-  /** Fetch the host model catalog and populate the selector. */
+  /** Fetch the host model catalog and render the model chip. */
   private async loadCatalog(): Promise<void> {
-    const select = this.modelSelectEl
-    if (select === null) return
+    if (this.modelChipEl === null) return
     try {
       const catalog = await this.plugin.client.rpc<ModelCatalogView>('session.modelCatalog', {})
       this.catalog = catalog
-      select.empty()
-      const selection = this.selectedModel ?? catalog.default
-      const valueOf = (sel: ModelSelectionView): string => JSON.stringify({ provider: sel.provider, model: sel.model })
-      let matched = false
-      for (const group of catalog.groups ?? []) {
-        if (group.models.length === 0) continue
-        const optgroup = select.createEl('optgroup', { attr: { label: group.name } })
-        for (const model of group.models) {
-          const value = valueOf({ provider: group.id, model: model.id })
-          const option = optgroup.createEl('option', { text: model.name, attr: { value } })
-          if (value === valueOf(selection)) {
-            option.selected = true
-            matched = true
-          }
-        }
-      }
-      if (!matched) {
-        const option = select.createEl('option', {
-          text: `${selection.provider}/${selection.model}`,
-          attr: { value: valueOf(selection) },
-        })
-        option.selected = true
-      }
-      this.selectedModel = selection
+      if (this.selectedModel === null) this.selectedModel = catalog.default
+      this.renderModelChip()
     } catch (error) {
       console.warn('[dsh-bridge] model catalog unavailable:', error)
     }
   }
 
-  /** Apply the dropdown selection: immediately for a live session, or stash it for the next one. */
-  private async applySelectedModel(): Promise<void> {
-    const select = this.modelSelectEl
-    if (select === null || select.value === '') return
-    let parsed: ModelSelectionView
-    try {
-      parsed = JSON.parse(select.value) as ModelSelectionView
-    } catch {
+  /** Reflect the current selection onto the chip (model bold + effort muted). */
+  private renderModelChip(): void {
+    const chip = this.modelChipEl
+    if (chip === null) return
+    chip.empty()
+    const sel = this.selectedModel
+    if (sel === null) {
+      chip.createSpan({ text: '模型…' })
       return
     }
-    this.selectedModel = parsed
-    if (this.sessionId === null) return
+    chip.createSpan({ text: sel.model, cls: 'dsh-chip-model' })
+    if (sel.reasoningEffort !== undefined && sel.reasoningEffort !== '') {
+      chip.createSpan({ text: sel.reasoningEffort, cls: 'dsh-chip-effort' })
+    }
+    const chevron = chip.createSpan({ cls: 'dsh-chip-chevron' })
+    setIcon(chevron, 'chevron-up')
+  }
+
+  /** Toggle the DSH-style model popover anchored above the chip. */
+  private toggleModelPopover(): void {
+    if (this.modelPopoverEl !== null) {
+      this.closeModelPopover()
+      return
+    }
+    const chip = this.modelChipEl
+    if (chip === null) return
+    const rect = chip.getBoundingClientRect()
+    const pop = document.body.createDiv({ cls: 'dsh-model-popover' })
+    pop.setCssStyles({
+      position: 'fixed',
+      bottom: `${window.innerHeight - rect.top + 8}px`,
+      left: `${Math.max(8, Math.min(rect.left, window.innerWidth - 300))}px`,
+      width: '300px',
+      maxHeight: '380px',
+      overflowY: 'auto',
+      background: 'var(--background-primary)',
+      border: '1px solid var(--background-modifier-border)',
+      borderRadius: '12px',
+      boxShadow: '0 8px 30px rgba(0,0,0,0.18)',
+      padding: '6px',
+      zIndex: '1000',
+    })
+    this.modelPopoverEl = pop
+    this.renderPopoverRoot(pop)
+    const outside = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (this.modelPopoverEl !== null && !this.modelPopoverEl.contains(target)
+        && !(chip !== null && chip.contains(target))) {
+        this.closeModelPopover()
+      }
+    }
+    setTimeout(() => document.addEventListener('click', outside), 0)
+    pop.addEventListener('destroy', () => document.removeEventListener('click', outside))
+  }
+
+  private closeModelPopover(): void {
+    this.modelPopoverEl?.dispatchEvent(new Event('destroy'))
+    this.modelPopoverEl?.remove()
+    this.modelPopoverEl = null
+  }
+
+  /** Root rows: 模型 / 推理等级, DSH Web popover style. */
+  private renderPopoverRoot(pop: HTMLElement): void {
+    pop.empty()
+    const sel = this.selectedModel
+    const modelRow = this.popoverRow(pop, '模型', sel?.model ?? '…')
+    modelRow.onclick = () => this.renderPopoverModels(pop)
+    const efforts = this.currentEfforts()
+    const effortValue = efforts === null ? '默认' : (sel?.reasoningEffort ?? '默认')
+    const effortRow = this.popoverRow(pop, '推理等级', effortValue)
+    if (efforts === null) effortRow.setCssStyles({ opacity: '0.45' })
+    else effortRow.onclick = () => this.renderPopoverEfforts(pop)
+  }
+
+  /** Model list grouped by provider (provider name as a header row). */
+  private renderPopoverModels(pop: HTMLElement): void {
+    pop.empty()
+    const back = this.popoverBackRow(pop, '模型')
+    back.onclick = () => this.renderPopoverRoot(pop)
+    for (const group of this.catalog?.groups ?? []) {
+      if (group.models.length === 0) continue
+      pop.createDiv({ cls: 'dsh-pop-group', text: group.name })
+      for (const model of group.models) {
+        const isCurrent = this.selectedModel?.provider === group.id && this.selectedModel?.model === model.id
+        const row = this.popoverRow(pop, model.id, isCurrent ? '✓' : '')
+        row.onclick = () => { void this.chooseModel(group.id, model.id) }
+      }
+    }
+  }
+
+  /** Reasoning effort list for the selected model. */
+  private renderPopoverEfforts(pop: HTMLElement): void {
+    pop.empty()
+    const back = this.popoverBackRow(pop, '推理等级')
+    back.onclick = () => this.renderPopoverRoot(pop)
+    const efforts = this.currentEfforts()
+    if (efforts === null || efforts.length === 0) {
+      pop.createDiv({ cls: 'dsh-pop-group', text: '当前模型无可选推理等级' })
+      return
+    }
+    for (const effort of efforts) {
+      const isCurrent = this.selectedModel?.reasoningEffort === effort.id
+      const row = this.popoverRow(pop, effort.name, isCurrent ? '✓' : '')
+      row.onclick = () => { void this.chooseEffort(effort.id) }
+    }
+  }
+
+  /** One popover row: label left, value right-aligned muted, chevron right. */
+  private popoverRow(pop: HTMLElement, label: string, value: string): HTMLElement {
+    const row = pop.createDiv({ cls: 'dsh-pop-row' })
+    row.setCssStyles({ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' })
+    row.createSpan({ text: label })
+    if (value !== '') {
+      const valueEl = row.createSpan({ text: value })
+      valueEl.setCssStyles({ marginLeft: 'auto', color: value === '✓' ? 'var(--text-accent)' : 'var(--text-muted)' })
+    }
+    const chevron = row.createSpan({})
+    chevron.setCssStyles({ marginLeft: value === '' ? 'auto' : '4px', color: 'var(--text-faint)', display: 'flex' })
+    setIcon(chevron, 'chevron-right')
+    return row
+  }
+
+  private popoverBackRow(pop: HTMLElement, label: string): HTMLElement {
+    const row = pop.createDiv({ cls: 'dsh-pop-back' })
+    row.setCssStyles({ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', color: 'var(--text-muted)' })
+    const chevron = row.createSpan({})
+    chevron.setCssStyles({ display: 'flex', transform: 'rotate(180deg)' })
+    setIcon(chevron, 'chevron-right')
+    row.createSpan({ text: label })
+    return row
+  }
+
+  /** Reasoning metadata of the currently selected model, or null. */
+  private currentEfforts(): Array<{ id: string; name: string; description?: string }> | null {
+    if (this.selectedModel === null || this.catalog === null) return null
+    for (const group of this.catalog.groups ?? []) {
+      if (group.id !== this.selectedModel.provider) continue
+      const model = group.models.find(m => m.id === this.selectedModel?.model)
+      return model?.reasoning?.efforts?.slice() ?? null
+    }
+    return null
+  }
+
+  /** Select a model (applies to the live session, or stashes for the next one). */
+  private async chooseModel(provider: string, model: string): Promise<void> {
+    this.selectedModel = { provider, model }
+    this.renderModelChip()
+    this.closeModelPopover()
+    await this.pushSelection()
+  }
+
+  /** Select a reasoning effort for the current model. */
+  private async chooseEffort(effortId: string): Promise<void> {
+    if (this.selectedModel === null) return
+    this.selectedModel = { ...this.selectedModel, reasoningEffort: effortId }
+    this.renderModelChip()
+    this.closeModelPopover()
+    await this.pushSelection()
+  }
+
+  /** Push the selection to the live session (silent when none is bound yet). */
+  private async pushSelection(): Promise<void> {
+    const sel = this.selectedModel
+    if (sel === null || this.sessionId === null) return
     try {
       const result = await this.plugin.client.rpc<{ selected?: ModelSelectionView }>('session.selectModel', {
         sessionId: this.sessionId,
-        provider: parsed.provider,
-        model: parsed.model,
+        provider: sel.provider,
+        model: sel.model,
+        ...(sel.reasoningEffort !== undefined ? { reasoningEffort: sel.reasoningEffort } : {}),
       })
-      if (result?.selected !== undefined) this.selectedModel = result.selected
-      new Notice(`模型已切换：${result?.selected?.model ?? parsed.model}`)
+      if (result?.selected !== undefined) {
+        this.selectedModel = result.selected
+        this.renderModelChip()
+      }
     } catch (error) {
       new Notice(`模型切换失败：${error instanceof Error ? error.message : String(error)}`)
     }
@@ -369,17 +516,9 @@ export class DshChatView extends ItemView {
           ? created.sessionId
           : String(created)
         this.sessionId = createdId
-        // A fresh session starts on the catalog default; re-apply the picker's
-        // selection before the first prompt lands.
-        if (this.selectedModel !== null
-          && (this.selectedModel.provider !== this.catalog?.default.provider
-            || this.selectedModel.model !== this.catalog?.default.model)) {
-          await this.plugin.client.rpc('session.selectModel', {
-            sessionId: this.sessionId,
-            provider: this.selectedModel.provider,
-            model: this.selectedModel.model,
-          })
-        }
+        // A fresh session starts on the catalog default; re-apply the chip's
+        // selection (model + effort) before the first prompt lands.
+        await this.pushSelection()
       }
       await this.plugin.client.rpc('session.prompt', {
         sessionId: this.sessionId,

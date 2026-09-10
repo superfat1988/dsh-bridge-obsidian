@@ -1,6 +1,6 @@
 {
   "name": "dsh-obsidian-plugin",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Obsidian plugin: chat with a DeepSeek Harness session over the dsh-bridge-obsidian WebSocket; agent vault tools execute locally via the Obsidian Vault API",
   "author": "kaitzh",
   "license": "MIT",
