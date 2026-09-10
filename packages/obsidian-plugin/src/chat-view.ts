@@ -233,6 +233,9 @@ export class DshChatView extends ItemView {
     })
     this.modelPopoverEl = pop
     this.renderPopoverRoot(pop)
+    // Capture phase: this must run BEFORE a row's own click handler — rows
+    // synchronously re-render the popover, which detaches the clicked node,
+    // and a bubble-phase containment check would then wrongly close it.
     const outside = (event: MouseEvent): void => {
       const target = event.target as Node
       if (this.modelPopoverEl !== null && !this.modelPopoverEl.contains(target)
@@ -240,8 +243,8 @@ export class DshChatView extends ItemView {
         this.closeModelPopover()
       }
     }
-    setTimeout(() => document.addEventListener('click', outside), 0)
-    pop.addEventListener('destroy', () => document.removeEventListener('click', outside))
+    document.addEventListener('click', outside, { capture: true })
+    pop.addEventListener('destroy', () => document.removeEventListener('click', outside, { capture: true }))
   }
 
   private closeModelPopover(): void {
