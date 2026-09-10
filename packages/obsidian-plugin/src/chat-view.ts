@@ -12,7 +12,7 @@ import { ItemView, MarkdownRenderer, Notice, Modal, Component, Setting, setIcon 
 import type { App } from "obsidian"
 import { DSH_MARK_SVG } from './icon.ts'
 import type DshBridgePlugin from './main.ts'
-import type { TurnRecord } from './archive.ts'
+import { listArchivedConversations, type TurnRecord } from './archive.ts'
 import {
   appendLiveRow,
   completeLastTool,
@@ -762,6 +762,48 @@ class HistoryModal extends Modal {
     contentEl.empty()
     contentEl.createEl('h3', { text: '历史会话' })
     const list = contentEl.createDiv({ cls: 'dsh-history-list' })
+    // Primary view: the user's Obsidian conversations (archive notes).
+    this.renderArchived(list)
+    // Secondary: the Host's full session list, for power use.
+    const toggle = contentEl.createDiv({ cls: 'dsh-history-toggle' })
+    const toggleBtn = toggle.createEl('button', { text: '显示全部 DSH 会话', cls: 'dsh-history-toggle-btn' })
+    toggleBtn.onclick = () => {
+      toggleBtn.disabled = true
+      this.renderHostSessions(list)
+    }
+  }
+
+  /** Archive-backed view: one entry per archived conversation note. */
+  private renderArchived(list: HTMLElement): void {
+    list.empty()
+    list.setText('加载中…')
+    void listArchivedConversations(this.app, this.plugin.settings.archiveFolder)
+      .then((items) => {
+        list.empty()
+        if (items.length === 0) {
+          list.setText('暂无存档对话（每轮对话会自动存档到 ' + this.plugin.settings.archiveFolder + '/）')
+          return
+        }
+        for (const item of items) {
+          const row = list.createDiv({ cls: 'dsh-history-row' })
+          const title = row.createDiv({ cls: 'dsh-history-title' })
+          title.setText(`${new Date(item.updatedAt).toLocaleString('zh-CN', { hour12: false }).slice(0, 16)}  ${item.title}`)
+          const tail = row.createDiv({ cls: 'dsh-history-id' })
+          tail.setText(item.sessionId.slice(0, 20) + '…')
+          row.onclick = () => {
+            void this.view.restoreSession(item.sessionId)
+            this.close()
+          }
+        }
+      })
+      .catch((error) => {
+        list.setText(`加载失败：${error instanceof Error ? error.message : String(error)}`)
+      })
+  }
+
+  /** Host session list (secondary view). */
+  private renderHostSessions(list: HTMLElement): void {
+    list.empty()
     list.setText('加载中…')
     void this.plugin.client.rpc<{ items?: SessionListEntry[] }>('session.list', {})
       .then((value) => {

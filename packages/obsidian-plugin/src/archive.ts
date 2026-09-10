@@ -147,3 +147,51 @@ export async function exportConversation(
   await app.vault.create(path, `${frontMatter(turn)}${renderTurn(turn)}\n`)
   return path
 }
+
+export interface ArchivedConversation {
+  /** Archive note path (vault-relative). */
+  file: string
+  /** Session id from frontmatter (`dsh-session`). */
+  sessionId: string
+  /** Display title = file basename without the leading date stamp. */
+  title: string
+  /** Last modification time of the archive note. */
+  updatedAt: number
+}
+
+/**
+ * List archived conversations: markdown notes under `folder` carrying a
+ * `dsh-session` frontmatter key. This backs the 🕐 history view — the panel
+ * shows the user's Obsidian conversations, not the Host's full session list.
+ */
+export async function listArchivedConversations(
+  app: App,
+  folder: string,
+): Promise<ArchivedConversation[]> {
+  const results: ArchivedConversation[] = []
+  for (const file of app.vault.getMarkdownFiles()) {
+    if (file.path !== `${file.path}` || !file.path.startsWith(`${folder}/`)) continue
+    if (file.path.slice(folder.length + 1).includes('/')) continue // top level only
+    const content = await app.vault.cachedRead(file)
+    const sessionId = readFrontmatterKey(content, 'dsh-session')
+    if (sessionId === undefined || sessionId === '') continue
+    const base = file.name.replace(/\.md$/, '')
+    const title = base.replace(/^\d{4}-\d{2}-\d{2}\s*/, '') || base
+    results.push({ file: file.path, sessionId, title, updatedAt: file.stat.mtime })
+  }
+  return results.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+function readFrontmatterKey(content: string, key: string): string | undefined {
+  if (!content.startsWith('---')) return undefined
+  const end = content.indexOf('\n---', 3)
+  if (end === -1) return undefined
+  for (const rawLine of content.slice(3, end).split('\n')) {
+    const line = rawLine.trim()
+    if (line.startsWith(`${key}:`)) {
+      const value = line.slice(key.length + 1).trim().replace(/^["']|["']$/g, '')
+      return value === '' ? undefined : value
+    }
+  }
+  return undefined
+}
