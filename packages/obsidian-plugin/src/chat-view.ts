@@ -227,7 +227,6 @@ export class DshChatView extends ItemView {
       background: 'var(--background-primary)',
       border: '1px solid var(--background-modifier-border)',
       borderRadius: '12px',
-      boxShadow: '0 8px 30px rgba(0,0,0,0.18)',
       padding: '6px',
       zIndex: '1000',
     })
