@@ -47,7 +47,15 @@ export default class DshBridgePlugin extends Plugin {
       if (call.name === 'obsidian_write_note') new Notice(`DSH 已写入笔记：${String(call.args['path'] ?? '')}`)
       return result
     }
-    this.client.onEvent = frame => this.chatView?.handleEvent(frame)
+    this.client.onEvent = frame => {
+      // Questions must surface even when the panel is closed: open it first,
+      // then route (the modal lives in the chat view).
+      if (frame.method === 'question/requested') {
+        void this.activateView().then(() => this.chatView?.handleEvent(frame))
+        return
+      }
+      this.chatView?.handleEvent(frame)
+    }
     this.client.onStatus = () => {
       this.chatView?.updateStatus()
       // The socket came back: durable history lives on the Host, re-fetch it
