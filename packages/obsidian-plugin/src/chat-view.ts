@@ -75,6 +75,9 @@ export class DshChatView extends ItemView {
   private selectedModel: ModelSelectionView | null = null
   private modelChipEl: HTMLButtonElement | null = null
   private modelPopoverEl: HTMLElement | null = null
+  /** Streaming assistant text (assistant-stream frames), superseded by durable assistant/message. */
+  private liveText = ''
+  private liveBubbleEl: HTMLElement | null = null
 
   constructor(leaf: ItemView['leaf'], plugin: DshBridgePlugin) {
     super(leaf)
@@ -386,6 +389,10 @@ export class DshChatView extends ItemView {
       this.showQuestionModal(question)
       return
     }
+    if (frame.method === 'session/assistant-stream' && typeof frame.payload === 'object' && frame.payload !== null) {
+      this.handleAssistantStream(frame.payload as { sessionId?: unknown; frame?: unknown })
+      return
+    }
     if (frame.method !== 'session/event' || typeof frame.payload !== 'object' || frame.payload === null) return
     const payload = frame.payload as { sessionId?: unknown; event?: SessionEventView }
     if (typeof payload.sessionId !== 'string' || payload.event === undefined) return
@@ -436,6 +443,8 @@ export class DshChatView extends ItemView {
       case 'assistant/message': {
         const row = rowFromEvent(event)
         if (row === null) break
+        // The durable assistant message supersedes all live streaming text.
+        if (row.kind === 'assistant') this.clearLiveBubble()
         this.rows = appendLiveRow(this.rows, row.kind, row.text, seq)
         if (this.currentTurn !== null) {
           if (row.kind === 'user') this.currentTurn.userText = row.text
@@ -587,6 +596,52 @@ export class DshChatView extends ItemView {
     setIcon(this.sendBtn, this.busy ? 'loader' : 'arrow-up')
   }
 
+  /** Live assistant stream: start/chunk/end frames → streaming bubble. */
+  private handleAssistantStream(payload: { sessionId?: unknown; frame?: unknown }): void {
+    const { sessionId, frame } = payload
+    if (typeof sessionId === 'string' && this.sessionId !== null && sessionId !== this.sessionId) return
+    if (typeof sessionId === 'string' && this.sessionId === null) this.sessionId = sessionId
+    if (typeof frame !== 'object' || frame === null) return
+    const f = frame as { type?: string; chunk?: { type?: string; text?: string } }
+    switch (f.type) {
+      case 'start':
+        this.liveText = ''
+        this.renderRows()
+        break
+      case 'chunk': {
+        const chunk = f.chunk
+        if (chunk === undefined || typeof chunk !== 'object') break
+        const text = chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' ? chunk.text : undefined
+        if (typeof text !== 'string' || text === '') break
+        this.liveText += text
+        // Incremental update without a full re-render; rebuild on demand.
+        if (this.liveBubbleEl !== null && this.liveBubbleEl.isConnected) {
+          this.liveBubbleEl.setText(this.liveText)
+        } else {
+          this.renderRows()
+        }
+        break
+      }
+      case 'end':
+        // Keep the buffer; the durable assistant/message supersedes it.
+        break
+    }
+  }
+
+  private clearLiveBubble(): void {
+    this.liveText = ''
+    this.liveBubbleEl?.remove()
+    this.liveBubbleEl = null
+  }
+
+  /** Re-append the live streaming bubble after a full re-render. */
+  private appendLiveBubble(container: HTMLElement): void {
+    if (this.liveText === '') return
+    const rowEl = container.createDiv({ cls: 'dsh-chat-row dsh-chat-assistant' })
+    this.liveBubbleEl = rowEl.createDiv({ cls: 'dsh-chat-bubble is-live' })
+    this.liveBubbleEl.setText(this.liveText)
+  }
+
   private renderRows(): void {
     const container = this.messagesEl
     if (container === null) return
@@ -625,6 +680,7 @@ export class DshChatView extends ItemView {
         bubble.setText(row.text)
       }
     }
+    if (this.busy || this.liveText !== '') this.appendLiveBubble(container)
     if (this.busy) {
       container.createDiv({ cls: 'dsh-chat-working', text: 'DSH 工作中…' })
     }

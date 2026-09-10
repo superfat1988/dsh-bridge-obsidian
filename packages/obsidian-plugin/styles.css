@@ -236,3 +236,10 @@
 .dsh-history-toggle { display:flex; justify-content:center; margin-top:10px; }
 .dsh-history-toggle-btn { font-size:12px; color:var(--text-muted); background:transparent; border:none; cursor:pointer; }
 .dsh-history-toggle-btn:hover { color:var(--text-accent); }
+
+.dsh-chat-bubble.is-live::after {
+  content: '▍';
+  animation: dsh-caret 1s steps(1) infinite;
+  color: var(--text-accent);
+}
+@keyframes dsh-caret { 50% { opacity: 0; } }

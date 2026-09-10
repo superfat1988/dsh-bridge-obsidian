@@ -12,6 +12,8 @@ if (!wsUrl || !token) {
   process.exit(1)
 }
 
+const t0 = Date.now()
+const ts = () => `+${((Date.now()-t0)/1000).toFixed(1)}s`
 const ws = new WebSocket(wsUrl)
 let helloOk = false
 let sawTurnEnd = false
@@ -63,7 +65,7 @@ ws.on('message', async (data) => {
       sessionId = typeof created === 'object' && created !== null && typeof created.sessionId === 'string'
         ? created.sessionId
         : String(created)
-      console.log('SMOKE: session created:', sessionId)
+      console.log(ts(), 'SMOKE: session created:', sessionId)
       const promptText = process.argv[4] === '--tools'
         ? '请用 obsidian_read_note 工具读取笔记 notes/test.md，然后用一句话告诉我天气如何。'
         : process.argv[4] === '--skills'
@@ -75,7 +77,7 @@ ws.on('message', async (data) => {
         content: [{ type: 'text', text: promptText }],
         clientTimeZone: 'Asia/Shanghai',
       })
-      console.log('SMOKE: prompt settled:', JSON.stringify(promptRes))
+      console.log(ts(), 'SMOKE: prompt settled:', JSON.stringify(promptRes))
       // mode:'queue' accepts before the turn runs: wait for turn/end.
       await new Promise((resolve, reject) => {
         const waitTimer = setTimeout(() => reject(new Error('turn/end never arrived')), 120_000)
@@ -115,7 +117,7 @@ ws.on('message', async (data) => {
       } else if (kind === 'question/requested') {
         detail = JSON.stringify(payload).slice(0, 200)
       }
-      console.log(`SMOKE: event ${kind ?? '?'} ${detail}`)
+      console.log(ts(), `SMOKE: event ${kind ?? '?'} ${String(detail).slice(0,60)}`)
       if (kind === 'turn/end') sawTurnEnd = true
       return
     }

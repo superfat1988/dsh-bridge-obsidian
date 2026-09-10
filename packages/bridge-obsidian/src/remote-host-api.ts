@@ -389,6 +389,8 @@ class EventGeneration {
             request: {
               address: { kind: 'session', sessionId },
               ...(maxMessages === undefined ? {} : { maxMessages }),
+              // Live assistant presentation frames (streaming text) for the panel.
+              assistantStream: true,
             },
           },
         },
@@ -437,6 +439,17 @@ class EventGeneration {
         if (signal.aborted || revision !== this.followRevision) break
         if (next.done) break
         if (!isSessionEventEntry(next.value)) {
+          // 0.1.3 opted-in assistant-stream live frames: forward them so the
+          // Obsidian panel can render streaming text (durable events supersede).
+          if (isRecord(next.value) && next.value.type === 'assistant-stream' && isRecord(next.value.frame)) {
+            this.queue.push({
+              rpcId: crypto.randomUUID(),
+              method: 'session/assistant-stream',
+              payload: { type: 'session/assistant-stream', sessionId, frame: next.value.frame },
+            })
+            continue
+          }
+          console.warn('[bridge-obsidian] session/follow unknown frame:', JSON.stringify(next.value).slice(0, 200))
           throw new TypeError('session/follow emitted an invalid incremental frame')
         }
         const seq = next.value.event.seq
