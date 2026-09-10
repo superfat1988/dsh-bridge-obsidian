@@ -1,7 +1,7 @@
 {
   "id": "dsh-bridge-obsidian",
   "name": "DSH Bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minAppVersion": "1.7.2",
   "description": "Chat with DeepSeek Harness over the dsh-bridge-obsidian WebSocket bridge; agent vault tools execute locally via the Obsidian Vault API.",
   "author": "kaitzh",

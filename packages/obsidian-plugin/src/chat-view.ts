@@ -82,30 +82,43 @@ export class DshChatView extends ItemView {
     const content = this.contentEl
     content.empty()
     content.addClass('dsh-chat-container')
+    // Critical layout is applied inline: styles.css is progressive polish,
+    // never a load-bearing dependency (stale-cache-proof).
+    content.setCssStyles({ display: 'flex', flexDirection: 'column', height: '100%', padding: '10px', boxSizing: 'border-box', gap: '8px' })
 
-    // Output window (top): conversation rows; empty state shows the DSH mark.
+    // Output window (top): conversation rows; empty state shows the DSH card.
     this.messagesEl = content.createDiv({ cls: 'dsh-chat-messages' })
+    this.messagesEl.setCssStyles({ flex: '1 1 auto', overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '4px 2px' })
 
     // Toolbar row above the input, Copilot-style: status left, icons right.
     const toolbar = content.createDiv({ cls: 'dsh-chat-toolbar' })
+    toolbar.setCssStyles({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' })
     this.statusEl = toolbar.createSpan({ cls: 'dsh-chat-status', text: '连接中…' })
+    this.statusEl.setCssStyles({ fontSize: '12px', color: 'var(--text-muted)' })
     const tools = toolbar.createDiv({ cls: 'dsh-chat-tools' })
+    tools.setCssStyles({ display: 'flex', alignItems: 'center', gap: '4px' })
+    const toolStyle = 'width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--icon-color);cursor:pointer'
     const newChatBtn = tools.createEl('div', { cls: 'dsh-tool-icon', attr: { 'aria-label': '新对话（新建一个 DSH 会话）', title: '新对话' } })
+    newChatBtn.setCssStyles({ cssText: toolStyle })
     setIcon(newChatBtn, 'plus')
     newChatBtn.onclick = () => { void this.startNewChat() }
     const settingsBtn = tools.createEl('div', { cls: 'dsh-tool-icon', attr: { 'aria-label': '聊天设置（存档与写审批）', title: '聊天设置' } })
+    settingsBtn.setCssStyles({ cssText: toolStyle })
     setIcon(settingsBtn, 'settings')
     settingsBtn.onclick = () => { void new ChatSettingsModal(this.app, this.plugin).open() }
     const historyBtn = tools.createEl('div', { cls: 'dsh-tool-icon', attr: { 'aria-label': '历史会话（从 DSH 恢复）', title: '历史会话' } })
+    historyBtn.setCssStyles({ cssText: toolStyle })
     setIcon(historyBtn, 'history')
     historyBtn.onclick = () => { void new HistoryModal(this.app, this.plugin, this).open() }
 
     // Input box with the model picker and circular send button inside.
     const inputBox = content.createDiv({ cls: 'dsh-chat-input-box' })
+    inputBox.setCssStyles({ border: '1px solid var(--background-modifier-border)', borderRadius: '10px', padding: '8px', background: 'var(--background-primary)' })
     this.inputEl = inputBox.createEl('textarea', {
       cls: 'dsh-chat-input',
       attr: { placeholder: '向 DSH 提问，或让它修改笔记…（Enter 发送，Shift+Enter 换行）', rows: '3' },
     })
+    this.inputEl.setCssStyles({ width: '100%', border: 'none', background: 'transparent', boxShadow: 'none', resize: 'none' })
     this.inputEl.onkeydown = (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
@@ -113,10 +126,13 @@ export class DshChatView extends ItemView {
       }
     }
     const inputRow = inputBox.createDiv({ cls: 'dsh-chat-input-row' })
+    inputRow.setCssStyles({ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' })
     this.modelSelectEl = inputRow.createEl('select', { cls: 'dsh-model-select' })
+    this.modelSelectEl.setCssStyles({ appearance: 'none', border: 'none', background: 'transparent', boxShadow: 'none', fontWeight: '600', fontSize: '13px', color: 'var(--text-normal)', maxWidth: '220px', cursor: 'pointer' })
     this.modelSelectEl.createEl('option', { text: '模型…', attr: { value: '' } })
     this.modelSelectEl.onchange = () => { void this.applySelectedModel() }
     this.sendBtn = inputRow.createEl('button', { cls: 'dsh-chat-send', attr: { 'aria-label': '发送', title: '发送' } })
+    this.sendBtn.setCssStyles({ marginLeft: 'auto', width: '30px', height: '30px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0', border: 'none', background: 'var(--interactive-accent)', color: 'var(--text-on-accent)', cursor: 'pointer' })
     setIcon(this.sendBtn, 'arrow-up')
 
     this.sendBtn.onclick = () => { void this.send() }
@@ -424,14 +440,17 @@ export class DshChatView extends ItemView {
     container.empty()
     if (this.rows.length === 0) {
       const card = container.createDiv({ cls: 'dsh-chat-empty' })
+      card.setCssStyles({ margin: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '28px 32px', border: '1px solid var(--background-modifier-border)', borderRadius: '14px' })
       const mark = card.createDiv({ cls: 'dsh-chat-empty-mark' })
+      mark.setCssStyles({ color: 'var(--interactive-accent)' })
       mark.innerHTML = DSH_MARK_SVG
-      // Explicit dimensions: renders correctly even if styles.css is stale.
       const svgEl = mark.querySelector('svg')
       svgEl?.setAttribute('width', '56')
       svgEl?.setAttribute('height', '56')
       card.createDiv({ cls: 'dsh-chat-empty-title', text: 'DeepSeek Harness' })
+        .setCssStyles({ fontSize: '16px', fontWeight: '600' })
       card.createDiv({ cls: 'dsh-chat-empty-sub', text: '向 DSH 提问，或让它读写你的笔记' })
+        .setCssStyles({ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' })
       return
     }
     for (const row of this.rows) {
