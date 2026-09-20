@@ -5,3 +5,5 @@ node_modules/
 **/main.js
 *.tsbuildinfo
 release/
+# Release bundles are build outputs delivered for manual install, not sources.
+*.zip

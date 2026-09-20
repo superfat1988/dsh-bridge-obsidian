@@ -15,15 +15,27 @@ export interface Row {
   status?: 'running' | 'complete'
 }
 
-/** Minimal view of a SessionEvent (payload in `data`). */
+/**
+ * Minimal view of a SessionEvent (payload in `data`).
+ *
+ * `seq` and `surfaceOp` ride the event root; `turn`/`step` identify the attempt
+ * a live-stream settlement belongs to. The bridge forwards the whole durable
+ * event, so these fields are present at runtime even though most renderers here
+ * only read `type` and `data.content`.
+ */
 export interface SessionEventView {
   type: string
+  seq?: number
+  surfaceOp?: unknown
   data?: {
     content?: unknown
     message?: { content?: unknown }
     name?: string
     arguments?: string
     source?: { kind?: string }
+    turn?: number
+    step?: number
+    title?: unknown
   }
 }
 

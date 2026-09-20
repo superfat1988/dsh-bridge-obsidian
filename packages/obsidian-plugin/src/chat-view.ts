@@ -26,12 +26,23 @@ import {
   type Row,
   type SessionEventView,
 } from './session-events.ts'
+// Vendored from dsh-bridge-browser, kept byte-identical and verified by hash;
+// see src/vendor/upstream/README.md for the sync contract.
+import { AssistantStreamView, type StreamUpdate } from './vendor/upstream/assistant-stream.ts'
 
 export const VIEW_TYPE_DSH_CHAT = 'dsh-bridge-obsidian-chat'
 
 interface HistoryPage {
   events?: Array<{ event?: SessionEventView }>
   hasMore?: boolean
+  /**
+   * In-flight Assistant attempt opening, present only when the Host was asked
+   * for the live stream and one is running. Seeding the live view from this
+   * restores the answer's opening text on reopen/reconnect.
+   */
+  assistantStream?: unknown
+  /** Correlates this response with the pushed baseline that carries it. */
+  snapshotId?: string
 }
 
 interface ModelSelectionView {
@@ -75,9 +86,40 @@ export class DshChatView extends ItemView {
   private selectedModel: ModelSelectionView | null = null
   private modelChipEl: HTMLButtonElement | null = null
   private modelPopoverEl: HTMLElement | null = null
-  /** Streaming assistant text (assistant-stream frames), superseded by durable assistant/message. */
+  /**
+   * Live assistant text, owned by the vendored upstream state machine instead
+   * of an ad-hoc buffer. One view per session key; the panel only ever renders
+   * the view belonging to its current session, so switching sessions cannot
+   * resurface a previous session's half-finished answer.
+   */
+  private readonly streamViews = new Map<string, AssistantStreamView>()
+  /**
+   * Snapshot ids whose pushed baseline has already been applied to a stream
+   * view. A history response carrying the same id must not re-seed: doing so
+   * would rebuild the view from the baseline and discard any live suffix chunk
+   * that arrived in the meantime.
+   */
+  private readonly appliedSnapshots = new Set<string>()
+  /** Live streaming text currently rendered, if any. */
   private liveText = ''
   private liveBubbleEl: HTMLElement | null = null
+
+  /**
+   * Remember one applied snapshot id, keeping the set small.
+   *
+   * Correlation only needs to survive the window between a pushed baseline and
+   * the history response that raced it, so the set is trimmed rather than left
+   * to grow for the life of a long-lived panel.
+   * @param snapshotId - id of the baseline that was just applied.
+   */
+  private rememberSnapshot(snapshotId: string): void {
+    this.appliedSnapshots.add(snapshotId)
+    while (this.appliedSnapshots.size > 32) {
+      const oldest = this.appliedSnapshots.values().next().value
+      if (oldest === undefined) break
+      this.appliedSnapshots.delete(oldest)
+    }
+  }
 
   constructor(leaf: ItemView['leaf'], plugin: DshBridgePlugin) {
     super(leaf)
@@ -390,7 +432,9 @@ export class DshChatView extends ItemView {
       return
     }
     if (frame.method === 'session/assistant-stream' && typeof frame.payload === 'object' && frame.payload !== null) {
-      this.handleAssistantStream(frame.payload as { sessionId?: unknown; frame?: unknown })
+      // Pass snapshotId through: it is what lets a pushed baseline and the
+      // history response that raced it be recognized as the same opening.
+      this.handleAssistantStream(frame.payload as { sessionId?: unknown; frame?: unknown; snapshotId?: unknown })
       return
     }
     if (frame.method !== 'session/event' || typeof frame.payload !== 'object' || frame.payload === null) return
@@ -401,6 +445,9 @@ export class DshChatView extends ItemView {
     if (this.sessionId === null) this.sessionId = payload.sessionId
 
     const event = payload.event
+    // A durable event supersedes the transient stream text it settles; do this
+    // before rendering so the bubble never outlives the message that replaced it.
+    if (this.streamViews.get(payload.sessionId)?.settle(event) === true) this.syncLiveText()
     const seq = this.nextSeqValue
     this.nextSeqValue += 1
     switch (event.type) {
@@ -443,8 +490,11 @@ export class DshChatView extends ItemView {
       case 'assistant/message': {
         const row = rowFromEvent(event)
         if (row === null) break
-        // The durable assistant message supersedes all live streaming text.
-        if (row.kind === 'assistant') this.clearLiveBubble()
+        // A durable assistant message supersedes the live text it settles; the
+        // state machine already recorded that settlement above, so re-derive
+        // rather than clearing the buffer directly — a message that does not
+        // belong to the active attempt must leave still-streaming text alone.
+        if (row.kind === 'assistant') this.syncLiveText()
         this.rows = appendLiveRow(this.rows, row.kind, row.text, seq)
         if (this.currentTurn !== null) {
           if (row.kind === 'user') this.currentTurn.userText = row.text
@@ -505,6 +555,10 @@ export class DshChatView extends ItemView {
     this.sessionTitle = null
     this.currentTurn = null
     this.nextSeqValue = 1
+    // Drop the previous session's rendered live bubble: the new session has no
+    // stream view yet, and leaving the old text in place would show one
+    // session's half-finished answer under another session's header.
+    this.resetRenderedLiveState()
     this.renderRows()
     this.updateSendButton()
     new Notice('已开启新对话（首次发送时创建会话）')
@@ -561,8 +615,12 @@ export class DshChatView extends ItemView {
   /** Re-fetch durable history from the Host (after reconnect or reopen). */
   async refreshHistory(): Promise<void> {
     if (this.sessionId === null || !this.plugin.client.isReady()) return
+    const boundSession = this.sessionId
     try {
-      const page = await this.plugin.client.rpc<HistoryPage>('session.history', { sessionId: this.sessionId })
+      const page = await this.plugin.client.rpc<HistoryPage>('session.history', { sessionId: boundSession })
+      // The panel may have moved on while this was in flight; a late response
+      // for a previous session must not overwrite the current one.
+      if (this.sessionId !== boundSession) return
       const events = (page.events ?? [])
         .map(entry => entry.event)
         .filter((event): event is SessionEventView => event !== undefined)
@@ -571,11 +629,25 @@ export class DshChatView extends ItemView {
         this.nextSeqValue += 1
         return seq
       })
+      // Seed the live view from the Host baseline when an attempt is already
+      // running, so the opening text is present even though its chunks were
+      // emitted before this panel attached. Skip when the pushed baseline for
+      // this very snapshot already landed — re-seeding would rebuild the view
+      // and discard a suffix chunk that arrived in the meantime.
+      const alreadyApplied = page.snapshotId !== undefined && this.appliedSnapshots.has(page.snapshotId)
+      if (page.assistantStream !== undefined && !alreadyApplied) {
+        const stream = this.streamViews.get(boundSession) ?? new AssistantStreamView()
+        stream.replace(page.assistantStream)
+        this.streamViews.set(boundSession, stream)
+      }
+      this.syncLiveText()
       this.renderRows()
     } catch {
+      if (this.sessionId !== boundSession) return
       // Unknown session (e.g. Host restarted): start fresh.
       this.sessionId = null
       this.rows = []
+      this.resetRenderedLiveState()
       this.renderRows()
     }
   }
@@ -586,6 +658,12 @@ export class DshChatView extends ItemView {
     this.rows = []
     this.sessionTitle = null
     this.nextSeqValue = 1
+    // `busy` describes the session that was bound, not the one being restored.
+    // Carrying it over would leave the send button disabled on a session that
+    // is not running; live turn events re-establish the real state.
+    this.busy = false
+    this.updateSendButton()
+    this.resetRenderedLiveState()
     await this.refreshHistory()
     if (this.rows.length === 0) new Notice('该会话没有可恢复的内容')
   }
@@ -596,42 +674,76 @@ export class DshChatView extends ItemView {
     setIcon(this.sendBtn, this.busy ? 'loader' : 'arrow-up')
   }
 
-  /** Live assistant stream: start/chunk/end frames → streaming bubble. */
-  private handleAssistantStream(payload: { sessionId?: unknown; frame?: unknown }): void {
-    const { sessionId, frame } = payload
-    if (typeof sessionId === 'string' && this.sessionId !== null && sessionId !== this.sessionId) return
-    if (typeof sessionId === 'string' && this.sessionId === null) this.sessionId = sessionId
-    if (typeof frame !== 'object' || frame === null) return
-    const f = frame as { type?: string; chunk?: { type?: string; text?: string } }
-    switch (f.type) {
-      case 'start':
-        this.liveText = ''
-        this.renderRows()
-        break
-      case 'chunk': {
-        const chunk = f.chunk
-        if (chunk === undefined || typeof chunk !== 'object') break
-        const text = chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' ? chunk.text : undefined
-        if (typeof text !== 'string' || text === '') break
-        this.liveText += text
-        // Incremental update without a full re-render; rebuild on demand.
-        if (this.liveBubbleEl !== null && this.liveBubbleEl.isConnected) {
-          this.liveBubbleEl.setText(this.liveText)
-        } else {
-          this.renderRows()
-        }
-        break
-      }
-      case 'end':
-        // Keep the buffer; the durable assistant/message supersedes it.
-        break
-    }
+  /**
+   * The state-machine view owning the current session's live attempt.
+   * @returns that view, or null when no session is bound or none exists yet.
+   */
+  private currentStreamView(): AssistantStreamView | null {
+    return this.sessionId === null ? null : this.streamViews.get(this.sessionId) ?? null
   }
 
-  private clearLiveBubble(): void {
-    this.liveText = ''
+  /**
+   * Re-derive rendered live text from the current session's view.
+   *
+   * This is the single source of truth for the streaming bubble: a view that
+   * has settled, rebaselined, or does not belong to the current session yields
+   * no text, so a switch can never resurface another session's stale answer.
+   */
+  private syncLiveText(): void {
+    this.liveText = this.currentStreamView()?.row()?.text ?? ''
+  }
+
+  /** Drop rendered live state and re-derive it for the newly bound session. */
+  private resetRenderedLiveState(): void {
     this.liveBubbleEl?.remove()
     this.liveBubbleEl = null
+    this.syncLiveText()
+  }
+
+  /**
+   * Live assistant stream: snapshot baselines and attempt frames feed the
+   * vendored state machine, which owns the partial text and settlement rules.
+   */
+  private handleAssistantStream(payload: { sessionId?: unknown; frame?: unknown; snapshotId?: unknown }): void {
+    const { sessionId, frame } = payload
+    if (typeof sessionId !== 'string') return
+    if (typeof frame !== 'object' || frame === null) return
+    // First live frame binds the panel to that session (new-chat flow).
+    if (this.sessionId === null) this.sessionId = sessionId
+    let stream = this.streamViews.get(sessionId)
+    if (stream === undefined) {
+      stream = new AssistantStreamView()
+      this.streamViews.set(sessionId, stream)
+    }
+    const value = frame as { type?: unknown; baseline?: unknown }
+    let update: StreamUpdate
+    if (value.type === 'snapshot') {
+      // Record before applying: the matching history response may already be
+      // queued on the RPC channel and must not re-seed over this baseline.
+      if (typeof payload.snapshotId === 'string') this.rememberSnapshot(payload.snapshotId)
+      update = stream.replace(value.baseline)
+    } else {
+      update = stream.accept(value)
+    }
+    if (sessionId !== this.sessionId) return
+    this.syncLiveText()
+    // Chunks arrive far faster than a repaint is wanted: reuse the mounted
+    // bubble when it is still attached, and fall back to a full re-render only
+    // when the row set actually changed (start/end/rebuild). A now-empty live
+    // text means the attempt settled or rebaselined, so the bubble is removed
+    // rather than left as a blank row.
+    if (this.liveText === '') {
+      this.liveBubbleEl?.remove()
+      this.liveBubbleEl = null
+      this.renderRows()
+    } else if (this.liveBubbleEl !== null && this.liveBubbleEl.isConnected) {
+      this.liveBubbleEl.setText(this.liveText)
+    } else {
+      this.renderRows()
+    }
+    // Rebaseline means the frame sequence had a gap the machine cannot repair;
+    // durable history is the only trustworthy source at that point.
+    if (update === 'rebaseline') void this.refreshHistory()
   }
 
   /** Re-append the live streaming bubble after a full re-render. */

@@ -7,6 +7,8 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter @yuxianglin/dsh-bridge-obsidian run build && pnpm --filter dsh-obsidian-plugin run build",
-    "typecheck": "pnpm --filter @yuxianglin/dsh-bridge-obsidian run typecheck && pnpm --filter dsh-obsidian-plugin run typecheck"
+    "typecheck": "pnpm --filter @yuxianglin/dsh-bridge-obsidian run typecheck && pnpm --filter dsh-obsidian-plugin run typecheck",
+    "package": "node scripts/package-plugin.mjs",
+    "release": "pnpm build && pnpm package"
   }
 }

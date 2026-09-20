@@ -57,6 +57,10 @@ interface SessionSnapshot {
   readonly records: readonly unknown[]
   readonly hasMore: boolean
   readonly projections?: unknown
+  /** In-flight Assistant attempt opening; present only while one is running. */
+  readonly assistantStream?: unknown
+  /** Correlates a pushed baseline with the history response that carried it. */
+  readonly snapshotId?: string
 }
 
 interface PendingQuestion {
@@ -408,12 +412,32 @@ class EventGeneration {
         throw new Error('obsidian bridge Session follower was replaced while opening')
       }
       this.onHistoryCursor(sessionId, first.value.cursor)
+      const snapshotId = first.value.assistantStream === undefined ? undefined : crypto.randomUUID()
+      // Publish the in-flight attempt opening before any live suffix chunk. RPC
+      // responses and pushed events race on separate channels, so without this
+      // prefix a panel that reopens its history mid-attempt would render only
+      // the chunks that arrive after it, silently dropping the beginning of an
+      // answer that is already generating.
+      if (first.value.assistantStream !== undefined) {
+        this.queue.push({
+          rpcId: crypto.randomUUID(),
+          method: 'session/assistant-stream',
+          payload: {
+            type: 'session/assistant-stream',
+            sessionId,
+            snapshotId,
+            frame: { type: 'snapshot', baseline: first.value.assistantStream },
+          },
+        })
+      }
       this.track(this.pumpSessionEvents(sessionId, revision, iterator, signal))
       return {
         cursor: first.value.cursor,
         records: first.value.records,
         hasMore: first.value.hasMore,
         ...(first.value.projections === undefined ? {} : { projections: first.value.projections }),
+        ...(first.value.assistantStream === undefined ? {} : { assistantStream: first.value.assistantStream }),
+        ...(snapshotId === undefined ? {} : { snapshotId }),
       }
     } catch (error: unknown) {
       if (revision === this.followRevision) {
@@ -677,6 +701,9 @@ async function oneShotSessionSnapshot(
       args: {
         request: {
           address: { kind: 'session', sessionId },
+          // Opt in so a history read can report an attempt that is already
+          // running; without it the panel drops the answer's opening text.
+          assistantStream: true,
           ...(maxMessages === undefined ? {} : { maxMessages }),
         },
       },
@@ -694,6 +721,7 @@ async function oneShotSessionSnapshot(
       records: first.value.records,
       hasMore: first.value.hasMore,
       ...(first.value.projections === undefined ? {} : { projections: first.value.projections }),
+      ...(first.value.assistantStream === undefined ? {} : { assistantStream: first.value.assistantStream }),
     }
   } finally {
     controller.abort(new Error('Session snapshot received'))
@@ -709,6 +737,11 @@ function historyValue(snapshot: SessionSnapshot): Record<string, unknown> {
     events: snapshot.records.flatMap(historyRecordEvents).map(event => ({ event })),
     hasMore: snapshot.hasMore,
     ...(snapshot.projections === undefined ? {} : { projections: snapshot.projections }),
+    // Carry the in-flight attempt opening so a panel that reopens a session
+    // while the Assistant is still generating can seed its live view instead
+    // of rendering only the chunks that arrive after it.
+    ...(snapshot.assistantStream === undefined ? {} : { assistantStream: snapshot.assistantStream }),
+    ...(snapshot.snapshotId === undefined ? {} : { snapshotId: snapshot.snapshotId }),
   }
 }
 
@@ -889,6 +922,7 @@ function isSessionSnapshot(value: unknown): value is {
   readonly records: readonly unknown[]
   readonly hasMore: boolean
   readonly projections?: unknown
+  readonly assistantStream?: unknown
 } {
   return isRecord(value)
     && value.type === 'snapshot'
