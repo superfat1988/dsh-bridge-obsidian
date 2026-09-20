@@ -47,7 +47,10 @@ export function createVaultSkillsMessage(manifestText: string): UserMessage {
     source: {
       kind: 'plugin',
       plugin: VAULT_SKILLS_PLUGIN,
-      form: 'skills',
+      // `snapshot` is the only dsh ContextForm that carries `sections`, and its
+      // "a later snapshot supersedes an earlier one" semantics match a manifest
+      // that is republished whenever the vault's skill set changes.
+      form: 'snapshot',
       sections: [{ name: 'vault-skills', text: manifestText }],
     },
   })

@@ -91,6 +91,8 @@ export type ClientFrame =
   /** Result of a previously dispatched tool call. */
   | { t: 'tool.result'; id: string; ok: true; result: unknown }
   | { t: 'tool.result'; id: string; ok: false; error: ToolError }
+  /** Vault skills the connected client publishes for bridge-session injection. */
+  | { t: 'skills.manifest'; skills: VaultSkillEntry[] }
   /** Liveness reply. */
   | { t: 'pong' }
 
@@ -139,7 +141,8 @@ export function isServerFrame(frame: BridgeFrame): frame is ServerFrame {
  * narrow out, so client-side consumers never dispatch on server vocabulary.
  */
 export function isClientFrame(frame: BridgeFrame): frame is ClientFrame {
-  return frame.t === 'hello' || frame.t === 'rpc' || frame.t === 'respond' || frame.t === 'tool.result' || frame.t === 'pong'
+  return frame.t === 'hello' || frame.t === 'rpc' || frame.t === 'respond' || frame.t === 'tool.result'
+    || frame.t === 'skills.manifest' || frame.t === 'pong'
 }
 
 /**
@@ -181,7 +184,7 @@ export function parseBridgeFrame(text: string): BridgeFrame | undefined {
         : undefined
     case 'skills.manifest':
       return Array.isArray(frame.skills) && frame.skills.every(isSkillEntry)
-        ? { t: 'skills.manifest', skills: frame.skills as VaultSkillEntry[] }
+        ? { t: 'skills.manifest', skills: frame.skills }
         : undefined
     case 'pong':
       return { t: 'pong' }
